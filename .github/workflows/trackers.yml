@@ -1,0 +1,39 @@
+name: Tracker & Alerte Mail
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-and-mail:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Configurer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Exécuter le relevé
+        env:
+          EA_SESSION: ${{ secrets.EA_SESSION }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+        run: python tracker_github.py
+
+      - name: Sauvegarder les données
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/adherents.csv data/last_alert.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: snapshot et maj alerte [skip ci]" && git push)
