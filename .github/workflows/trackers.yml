@@ -2,7 +2,7 @@ name: Tracker & Alerte Mail
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: EA_SESSION
     steps:
-      - name: Récupérer le code
+      - name: Recuperer le code
         uses: actions/checkout@v4
 
       - name: Configurer Python
@@ -22,17 +22,17 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Installer les dépendances
+      - name: Installer les dependances
         run: pip install -r requirements.txt
 
-      - name: Exécuter le relevé
+      - name: Executer le releve
         env:
           EA_SESSION: ${{ secrets.EA_SESSION }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
-        run: python tracker_github.py
+        run: python -u tracker_github.py
 
-      - name: Sauvegarder les données
+      - name: Sauvegarder les donnees
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
