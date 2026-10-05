@@ -5,178 +5,65 @@ import json
 import os
 import re
 import smtplib
+import sys
 import requests
 
-# Seuils de notification
-SEUIL_ADHERENTS = 25  # Alerte si +Y adhérents
-SEUIL_HEURES = 12  # Ou récapitulatif toutes les X heures
-OBJECTIF = 60000
-
-URL = "https://adherent.unenouvelleenergie.fr/parrainer"
-CSV_FILE = "data/adherents.csv"
-STATE_FILE = "data/last_alert.json"
+print(">>> [1/5] Demarrage du script Python...", flush=True)
 
 COOKIE = os.getenv("EA_SESSION")
-SMTP_USER = os.getenv("GMAIL_USER")  # Ton adresse gmail
-SMTP_PASS = os.getenv("GMAIL_APP_PASS")  # Ton mot de passe d'application
-DESTINATAIRE = os.getenv(
-    "EMAIL_DESTINATAIRE", SMTP_USER
-)  # Par défaut, envoyé à toi-même
+SMTP_USER = os.getenv("GMAIL_USER")
+SMTP_PASS = os.getenv("GMAIL_APP_PASS")
 
+print(f">>> [2/5] Verification des variables d'environnement :", flush=True)
+print(f"    - EA_SESSION present : {bool(COOKIE)}", flush=True)
+print(f"    - GMAIL_USER present : {bool(SMTP_USER)}", flush=True)
+print(f"    - GMAIL_APP_PASS present : {bool(SMTP_PASS)}", flush=True)
 
-def extraire_donnees():
-  session = requests.Session()
-  session.cookies.set(
-      "ea_session", COOKIE, domain="adherent.unenouvelleenergie.fr"
-  )
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-      ),
-      "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      ),
-  }
-  resp = session.get(URL, headers=headers, timeout=15)
-  resp.raise_for_status()
+if not COOKIE:
+    print("ERREUR FATALE : Cookie EA_SESSION manquant dans l'environnement.", flush=True)
+    sys.exit(1)
 
-  match_collectif = re.search(
-      r'\\?"collectif\\?"\s*:\s*\{\s*\\?"adherents\\?"\s*:\s*(\d+)', resp.text
-  )
-  match_gain = re.search(r'\\?"gainSemaine\\?"\s*:\s*(\d+)', resp.text)
+URL = "https://adherent.unenouvelleenergie.fr/parrainer"
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
-  if match_collectif:
-    total = int(match_collectif.group(1))
-    gain_7j = int(match_gain.group(1)) if match_gain else 0
-    return total, gain_7j
-  return None, None
+print(">>> [3/5] Requete vers le site...", flush=True)
+try:
+    session = requests.Session()
+    session.cookies.set("ea_session", COOKIE, domain="adherent.unenouvelleenergie.fr")
+    resp = session.get(URL, headers=headers, timeout=15)
+    print(f"    - Code HTTP : {resp.status_code}", flush=True)
+except Exception as e:
+    print(f"ERREUR REQUETE : {e}", flush=True)
+    sys.exit(1)
 
+match_collectif = re.search(r'\\?"collectif\\?"\s*:\s*\{\s*\\?"adherents\\?"\s*:\s*(\d+)', resp.text)
+match_gain = re.search(r'\\?"gainSemaine\\?"\s*:\s*(\d+)', resp.text)
 
-def sauvegarder_csv(iso_date, adherents, gain_7j):
-  os.makedirs("data", exist_ok=True)
-  existe = os.path.isfile(CSV_FILE)
-  with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as f:
-    writer = csv.writer(f)
-    if not existe:
-      writer.writerow(["timestamp", "adherents", "gain_7j"])
-    writer.writerow([iso_date, adherents, gain_7j])
+if not match_collectif:
+    print("ERREUR EXTRACTION : Impossible de trouver le bloc collectif dans la page.", flush=True)
+    print(f"Apercu reponse (200 premiers car.) : {resp.text[:200]}", flush=True)
+    sys.exit(1)
 
+adherents = int(match_collectif.group(1))
+gain_7j = int(match_gain.group(1)) if match_gain else 0
+print(f">>> [4/5] Donnees extraites : {adherents} adherents (+{gain_7j} sur 7j)", flush=True)
 
-def lire_etat():
-  if os.path.isfile(STATE_FILE):
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-      return json.load(f)
-  return None
+# Test d'envoi du mail
+print(f">>> [5/5] Tentative d'envoi du mail a {SMTP_USER}...", flush=True)
+try:
+    corps = f"Point compteur : {adherents} adherents Nouvelle Energie."
+    msg = MIMEText(corps, "plain", "utf-8")
+    msg["Subject"] = f"Test Bot NE : {adherents} adherents"
+    msg["From"] = SMTP_USER
+    msg["To"] = SMTP_USER
 
-
-def ecrire_etat(iso_date, adherents):
-  os.makedirs("data", exist_ok=True)
-  with open(STATE_FILE, "w", encoding="utf-8") as f:
-    json.dump({"timestamp": iso_date, "adherents": adherents}, f, indent=2)
-
-
-def envoyer_email(sujet, contenu):
-  if not SMTP_USER or not SMTP_PASS:
-    print("Identifiants e-mail non configurés.")
-    return
-
-  msg = MIMEText(contenu, "plain", "utf-8")
-  msg["Subject"] = sujet
-  msg["From"] = SMTP_USER
-  msg["To"] = DESTINATAIRE
-
-  with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-    server.login(SMTP_USER, SMTP_PASS)
-    server.sendmail(SMTP_USER, [DESTINATAIRE], msg.as_string())
-  print(f"E-mail envoyé avec succès à {DESTINATAIRE}")
-
-
-def run():
-  if not COOKIE:
-    print("Erreur : EA_SESSION manquant.")
-    return
-
-  adherents, gain_7j = extraire_donnees()
-  if adherents is None:
-    print("Impossible de lire les chiffres. Le cookie a peut-être expiré.")
-    return
-
-  maintenant = datetime.now(timezone.utc)
-  maintenant_iso = maintenant.isoformat()
-
-  # Enregistrement dans le CSV
-  sauvegarder_csv(maintenant_iso, adherents, gain_7j)
-  print(f"Relevé archivé : {adherents} adhérents")
-
-  # Lecture de l'état précédent
-  etat = lire_etat()
-  premier_lancement = False
-
-  if etat is None:
-    premier_lancement = True
-    dernier_total = adherents
-    derniere_date = maintenant
-    print("Premier lancement détecté.")
-  else:
-    dernier_total = etat["adherents"]
-    derniere_date = datetime.fromisoformat(etat["timestamp"])
-
-  delta_adherents = adherents -  dernier_total
-  delta_heures = (maintenant - derniere_date).total_seconds() / 3600
-
-  # Décision : on force l'envoi si premier lancement OU si les seuils sont atteints
-  doit_notifier = False
-  type_alerte = ""
-
-  if premier_lancement:
-    doit_notifier = True
-    type_alerte = (
-        f"🚀 Test Bot NE : {adherents:,} adhérents au compteur !".replace(
-            ",", " "
-        )
-    )
-  elif delta_adherents >= SEUIL_ADHERENTS:
-    doit_notifier = True
-    type_alerte = f"⚡ Palier franchi : {adherents:,} adhérents !".replace(
-        ",", " "
-    )
-  elif delta_heures >= SEUIL_HEURES:
-    doit_notifier = True
-    type_alerte = (
-        f"📊 Point d'étape quotidien : {adherents:,} adhérents".replace(
-            ",", " "
-        )
-    )
-
-  # TEST : Si tu veux TOUJOURS recevoir un mail à chaque run manuel, décommente la ligne ci-dessous :
-  doit_notifier = True
-
-  if doit_notifier:
-    pourcentage = (adherents / OBJECTIF) * 100
-
-    tweet_texte = (
-        f"Point d'étape · @nouv_energie\n\n"
-        f"👥 {adherents:,} adhérents\n"
-        f"🎯 {pourcentage:.1f} % de l'objectif ({OBJECTIF:,})\n"
-        f"📈 +{gain_7j:,} sur 7 jours (+{delta_adherents} depuis le dernier"
-        " point)\n\n"
-        f"#NouvelleEnergie #DavidLisnard"
-    ).replace(",", " ")
-
-    email_corps = (
-        f"Bonjour,\n\n"
-        f"Un nouveau point d'étape est disponible.\n\n"
-        f"--- TEXTE À COPIER / COLLER POUR LE TWEET ---\n\n"
-        f"{tweet_texte}\n\n"
-        f"----------------------------------------------\n"
-        f"Lien direct pour tweeter : https://twitter.com/intent/tweet?text="
-        f"{requests.utils.quote(tweet_texte)}"
-    )
-
-    envoyer_email(type_alerte or "Point compteur NE", email_corps)
-    ecrire_etat(maintenant_iso, adherents)
-  else:
-    print(
-        f"Pas d'alerte (+{delta_adherents}/{SEUIL_ADHERENTS} adh,"
-        f" {delta_heures:.1f}/{SEUIL_HEURES}h)."
-    )
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(SMTP_USER, SMTP_PASS)
+        server.sendmail(SMTP_USER, [SMTP_USER], msg.as_string())
+    print("SUCCES : Le mail a ete envoye !", flush=True)
+except Exception as e:
+    print(f"ERREUR ENVOI MAIL : {e}", flush=True)
+    sys.exit(1)
