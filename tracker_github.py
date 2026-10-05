@@ -8,7 +8,7 @@ import smtplib
 import requests
 
 # Seuils de notification
-SEUIL_ADHERENTS = 250  # Alerte si +Y adhérents
+SEUIL_ADHERENTS = 0  # Alerte si +Y adhérents
 SEUIL_HEURES = 12  # Ou récapitulatif toutes les X heures
 OBJECTIF = 60000
 
