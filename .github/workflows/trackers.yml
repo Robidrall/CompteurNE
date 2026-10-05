@@ -11,6 +11,7 @@ permissions:
 jobs:
   track-and-mail:
     runs-on: ubuntu-latest
+    environment: EA_SESSION
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
