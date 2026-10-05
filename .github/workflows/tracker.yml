@@ -1,4 +1,4 @@
-name: Tracker & Alerte Mail
+name: Tracker & Mail
 
 on:
   schedule:
