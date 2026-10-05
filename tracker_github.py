@@ -9,7 +9,7 @@ import sys
 import requests
 
 # --- Paramètres ---
-PAS_PALIER = 100  # Alertes tous les 100 (38000, 38100, 38200...)
+PAS_PALIER = 50  # Alertes tous les 100 (38000, 38100, 38200...)
 SEUIL_HEURES = 6   # Alerte toutes les 6 heures max
 OBJECTIF_FINAL = 100000
 
