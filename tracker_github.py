@@ -108,23 +108,34 @@ def run():
   sauvegarder_csv(maintenant_iso, adherents, gain_7j)
   print(f"Relevé archivé : {adherents} adhérents")
 
-  # Vérification des seuils
+  # Lecture de l'état précédent
   etat = lire_etat()
+  premier_lancement = False
+
   if etat is None:
-    ecrire_etat(maintenant_iso, adherents)
-    print("État initialisé.")
-    #return
+    premier_lancement = True
+    dernier_total = adherents
+    derniere_date = maintenant
+    print("Premier lancement détecté.")
+  else:
+    dernier_total = etat["adherents"]
+    derniere_date = datetime.fromisoformat(etat["timestamp"])
 
-  dernier_total = etat["adherents"]
-  derniere_date = datetime.fromisoformat(etat["timestamp"])
-
-  delta_adherents = adherents - dernier_total
+  delta_adherents = adherents -  dernier_total
   delta_heures = (maintenant - derniere_date).total_seconds() / 3600
 
+  # Décision : on force l'envoi si premier lancement OU si les seuils sont atteints
   doit_notifier = False
   type_alerte = ""
 
-  if delta_adherents >= SEUIL_ADHERENTS:
+  if premier_lancement:
+    doit_notifier = True
+    type_alerte = (
+        f"🚀 Test Bot NE : {adherents:,} adhérents au compteur !".replace(
+            ",", " "
+        )
+    )
+  elif delta_adherents >= SEUIL_ADHERENTS:
     doit_notifier = True
     type_alerte = f"⚡ Palier franchi : {adherents:,} adhérents !".replace(
         ",", " "
@@ -137,10 +148,12 @@ def run():
         )
     )
 
+  # TEST : Si tu veux TOUJOURS recevoir un mail à chaque run manuel, décommente la ligne ci-dessous :
+  doit_notifier = True
+
   if doit_notifier:
     pourcentage = (adherents / OBJECTIF) * 100
 
-    # Texte prêt à être copié-collé sur X
     tweet_texte = (
         f"Point d'étape · @nouv_energie\n\n"
         f"👥 {adherents:,} adhérents\n"
@@ -160,14 +173,10 @@ def run():
         f"{requests.utils.quote(tweet_texte)}"
     )
 
-    envoyer_email(type_alerte, email_corps)
+    envoyer_email(type_alerte or "Point compteur NE", email_corps)
     ecrire_etat(maintenant_iso, adherents)
   else:
     print(
         f"Pas d'alerte (+{delta_adherents}/{SEUIL_ADHERENTS} adh,"
         f" {delta_heures:.1f}/{SEUIL_HEURES}h)."
     )
-
-
-if __name__ == "__main__":
-  run()
