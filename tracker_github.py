@@ -8,7 +8,7 @@ import smtplib
 import requests
 
 # Seuils de notification
-SEUIL_ADHERENTS = 0  # Alerte si +Y adhérents
+SEUIL_ADHERENTS = 25  # Alerte si +Y adhérents
 SEUIL_HEURES = 12  # Ou récapitulatif toutes les X heures
 OBJECTIF = 60000
 
@@ -113,7 +113,7 @@ def run():
   if etat is None:
     ecrire_etat(maintenant_iso, adherents)
     print("État initialisé.")
-    return
+    #return
 
   dernier_total = etat["adherents"]
   derniere_date = datetime.fromisoformat(etat["timestamp"])
