@@ -3,9 +3,8 @@ import json
 import os
 from datetime import datetime
 
-# Import des modules locaux
-from CompteurNE.extraction import recuperer_donnees
-from CompteurNE.visualisation import generer_graphique_departements
+from extraction import recuperer_donnees
+from visualisation import generer_graphique_departements
 
 # --- CONFIGURATION ---
 FICHIER_CSV = "data/adherents.csv"
