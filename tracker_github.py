@@ -76,6 +76,11 @@ def calculer_gain_historique(maintenant, adherents_actuels, jours_arriere):
         for row in reversed(lignes[1:]):
             try:
                 dt = datetime.fromisoformat(row[0])
+                
+                # Ajout de l'information de fuseau horaire si elle est manquante
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                    
                 if dt <= cible:
                     adherents_historique = int(row[1])
                     break
