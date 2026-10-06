@@ -168,7 +168,15 @@ def run():
         return
 
     dernier_total = etat.get("adherents", adherents)
-    derniere_date = datetime.fromisoformat(etat["timestamp"])
+    # Récupération sécurisée avec repli sur la date actuelle si la clé manque
+    timestamp_str = etat.get("timestamp", maintenant_iso)
+    try:
+        derniere_date = datetime.fromisoformat(timestamp_str)
+        # Gestion du fuseau horaire s'il est manquant dans l'ancien JSON
+        if derniere_date.tzinfo is None:
+            derniere_date = derniere_date.replace(tzinfo=timezone.utc)
+    except Exception:
+        derniere_date = maintenant
     dernier_palier = etat.get("dernier_palier", (dernier_total // PAS_PALIER) * PAS_PALIER)
 
     delta_heures = (maintenant - derniere_date).total_seconds() / 3600
