@@ -2,4 +2,3 @@ requests
 pandas
 plotly
 kaleido
-urlib
