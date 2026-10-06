@@ -1,3 +1,4 @@
+from urllib import response
 import requests
 import json
 import re
@@ -19,15 +20,18 @@ def recuperer_donnees():
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         raise ConnectionError(f"Erreur de connexion à la cible : {e}")
-    
-    # 1. Recherche de la chaîne encodée
+
+    print("Début du code source reçu :")
+    print(response.text[:1000])
+
     match = re.search(r'self\.__next_f\.push\(\[1,"6:(.*?)"\]\]', response.text)
+    
     if not match:
         raise ValueError("Bloc de données (Next.js) introuvable dans la page.")
     
     # 2. Décodage
     raw_json = match.group(1).replace('\\"', '"').replace('\\\\', '\\')
-    
+
     # 3. Isolation de l'objet "d"
     json_str_match = re.search(r'\["\$","\$Lc",null,\{"d":(\{.*\})\}\]', raw_json)
     if not json_str_match:
