@@ -3,46 +3,53 @@ import json
 import re
 import os
 
-URL_CIBLE = "https://adherent.unenouvelleenergie.fr/"
+# 1. CORRECTION : La bonne URL du tableau de bord
+URL_CIBLE = "https://adherent.unenouvelleenergie.fr/parrainer"
 
 def recuperer_donnees():
     session = requests.Session()
     
-    # 1. On se fait passer pour Google Chrome pour éviter le blocage anti-bot
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
-    })
+    # 2. CORRECTION : Les headers exacts qui marchaient hier
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
     
+    # 3. CORRECTION : L'injection stricte du cookie avec son domaine
     ea_session = os.environ.get("EA_SESSION")
     if ea_session:
-        session.cookies.set("EA_SESSION", ea_session)
+        session.cookies.set("ea_session", ea_session, domain="adherent.unenouvelleenergie.fr")
         
-    response = session.get(URL_CIBLE, allow_redirects=True)
-    response.raise_for_status()
+    resp = session.get(URL_CIBLE, headers=headers, timeout=15)
+    resp.raise_for_status()
     
-    # 2. Vérification stricte de la redirection
-    if "login" in response.url or "connexion" in response.url:
-        raise ValueError(f"🚨 REDIRECTION DÉTECTÉE vers {response.url} !\nLe cookie EA_SESSION est invalide ou le site utilise un autre nom de cookie (ex: next-auth.session-token).")
+    # Vérification anti-redirection (si le cookie est mort)
+    if "login" in resp.url or "connexion" in resp.url:
+        raise ValueError("Redirection vers la page de connexion : Le cookie EA_SESSION a expiré.")
 
-    # 3. Recherche des données (plus souple, sans dépendre du numéro de chunk Next.js)
-    texte_propre = response.text.replace('\\"', '"').replace('\\\\', '\\')
+    # --- EXTRACTION ---
+    # 1. On récupère le total avec ta méthode Regex ultra-robuste
+    match_collectif = re.search(r'\\?"collectif\\?"\s*:\s*\{\s*\\?"adherents\\?"\s*:\s*(\d+)', resp.text)
+    if not match_collectif:
+        raise ValueError("Impossible de trouver le total des adhérents sur la page.")
+    total_adherents = int(match_collectif.group(1))
     
-    match = re.search(r'\["\$","\$Lc",null,\{"d":(\{.*?\})\}\]', texte_propre)
-    if not match:
-        raise ValueError("Le site a chargé, mais la structure des données (l'objet 'd') est introuvable. Le code source a pu être modifié par les développeurs.")
+    # 2. On récupère le bloc JSON complet pour isoler les départements
+    texte_propre = resp.text.replace('\\"', '"').replace('\\\\', '\\')
+    match_json = re.search(r'\["\$","\$Lc",null,\{"d":(\{.*?\})\}\]', texte_propre)
+    
+    if match_json:
+        donnees = json.loads(match_json.group(1))
+        departements = donnees.get('parrainage', {}).get('departements', [])
+    else:
+        raise ValueError("Impossible de trouver le détail des départements dans le code source.")
         
-    donnees_brutes = match.group(1)
-    
-    # 4. Conversion et extraction
-    donnees = json.loads(donnees_brutes)
-    total_adherents = donnees['collectif']['adherents']
-    departements = donnees['parrainage']['departements']
-    
     return total_adherents, departements
 
 if __name__ == "__main__":
-    # Permet de tester le fichier tout seul
+    # Test d'exécution locale
     total, deps = recuperer_donnees()
-    print(f"Succès : {total} adhérents trouvés.")
+    print(f"Succès : {total} adhérents et {len(deps)} départements trouvés.")
