@@ -31,21 +31,26 @@ def recuperer_donnees():
         raise ValueError("Redirection vers la page de connexion : Le cookie EA_SESSION a expiré.")
 
     # --- EXTRACTION ---
-    # 1. On récupère le total avec ta méthode Regex ultra-robuste
+    # 1. On récupère le total avec la méthode Regex ultra-robuste
     match_collectif = re.search(r'\\?"collectif\\?"\s*:\s*\{\s*\\?"adherents\\?"\s*:\s*(\d+)', resp.text)
     if not match_collectif:
         raise ValueError("Impossible de trouver le total des adhérents sur la page.")
     total_adherents = int(match_collectif.group(1))
-    
-    # 2. On récupère le bloc JSON complet pour isoler les départements
-    texte_propre = resp.text.replace('\\"', '"').replace('\\\\', '\\')
-    match_json = re.search(r'\["\$","\$Lc",null,\{"d":(\{.*?\})\}\]', texte_propre)
-    
-    if match_json:
-        donnees = json.loads(match_json.group(1))
-        departements = donnees.get('parrainage', {}).get('departements', [])
-    else:
-        raise ValueError("Impossible de trouver le détail des départements dans le code source.")
+
+    # 2. On cible EXCLUSIVEMENT le tableau "departements"
+    # Il commence par "departements":[ et se termine juste avant ,"seuilClassement"
+    match_deps = re.search(r'\\?"departements\\?"\s*:\s*(\[.*?\])\s*,\s*\\?"seuilClassement\\?"', resp.text)
+
+    if not match_deps:
+        raise ValueError("Impossible d'isoler le tableau des départements dans le code source.")
+        
+    # On nettoie les guillemets d'échappement uniquement sur ce bloc précis
+    deps_str = match_deps.group(1).replace('\\"', '"')
+
+    try:
+        departements = json.loads(deps_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Échec de la lecture JSON des départements : {e}\nExtrait : {deps_str[:100]}")
         
     return total_adherents, departements
 
