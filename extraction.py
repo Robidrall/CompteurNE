@@ -3,7 +3,7 @@ import json
 import re
 import os
 
-URL_CIBLE = "https://adherent.unenouvelleenergie.fr/"
+URL_CIBLE = "https://adherent.unenouvelleenergie.fr/parrainer"
 
 def recuperer_donnees():
     """Extrait le JSON contenu dans la page et renvoie le total et les départements."""
