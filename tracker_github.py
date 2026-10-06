@@ -2,6 +2,7 @@ import csv
 import json
 import os
 from datetime import datetime
+import pandas as pd
 
 from extraction import recuperer_donnees
 from visualisation import generer_graphique_departements
