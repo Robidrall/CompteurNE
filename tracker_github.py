@@ -15,6 +15,7 @@ import matplotlib
 matplotlib.use("Agg")  # Mode headless sans interface graphique
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.patches import FancyBboxPatch
 
 # --- Paramètres généraux ---
 PAS_PALIER = 50        # Alerte tous les 50 nouveaux adhérents
@@ -50,13 +51,13 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
 
-def calculer_cadence_recente(csv_file: str = CSV_FILE):
+def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     """Calcule la cadence moyenne entre les deux derniers enregistrements du CSV ramenée à la minute."""
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
 
     with open(csv_file, "r", encoding="utf-8") as f:
-        lignes = list(csv.reader(f))
+        lignes = [r for r in csv.reader(f) if r]
 
     # Il faut au moins l'en-tête et 2 relevés
     if len(lignes) < 3:
@@ -79,90 +80,129 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE):
     if delta_minutes <= 0 or delta_adh <= 0:
         return "Rythme temporairement calme"
 
-    # Si le flux est très rapide (> 1 adh / minute)
     adh_par_minute = delta_adh / delta_minutes
     if adh_par_minute >= 1.0:
         return f"~{adh_par_minute:.1f} adh. / min"
-    
-    # Si le flux est plus espacé (< 1 adh / minute)
+
     minutes_par_adh = delta_minutes / delta_adh
     return f"1 adhésion toutes les {int(round(minutes_par_adh))} min"
 
 
+def calculer_momentum(gain_24h: int, gain_7j: int):
+    """Calcule la tendance d'accélération vs la moyenne hebdomadaire."""
+    moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
+    if moyenne_jour > 0:
+        ecart = ((gain_24h - moyenne_jour) / moyenne_jour) * 100
+        if ecart >= 10:
+            return f"🟢 En accélération (+{int(ecart)} % vs moy. 7j)", moyenne_jour
+        elif ecart <= -10:
+            return f"🟠 En décélération ({int(ecart)} % vs moy. 7j)", moyenne_jour
+        else:
+            return "⚪ Rythme stable (conforme à la moy. 7j)", moyenne_jour
+    return "⚪ Données en cours d'acquisition", moyenne_jour
+
+
 def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int, 
                            cap_precedent: int, prochain_cap: int, output_path: str):
-    """Génère une carte statistique 1200x675 px sombre prête pour Twitter/X."""
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    """Génère une carte statistique 1200x675 px moderne aux couleurs de la France."""
+    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    # Récupération de l'historique récent pour le mini-graphique
+    fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#0B101E")
+    
+    # 1. Ruban tricolore supérieur (Bleu Marianne #002654, Blanc #FFFFFF, Rouge #ED2939)
+    band_height = 0.014
+    ax_banner = fig.add_axes([0, 1 - band_height, 1, band_height])
+    ax_banner.axis("off")
+    ax_banner.axvspan(0, 0.333, color="#002654")
+    ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
+    ax_banner.axvspan(0.666, 1.0, color="#ED2939")
+    
+    # 2. Vignette drapeau tricolore
+    ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
+    ax_flag.axis("off")
+    ax_flag.axvspan(0, 0.333, color="#002654")
+    ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
+    ax_flag.axvspan(0.666, 1.0, color="#ED2939")
+    for spine in ax_flag.spines.values():
+        spine.set_color("#334155")
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
+
+    # 3. En-tête
+    fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#FFFFFF", fontsize=15, weight="heavy")
+    fig.text(0.305, 0.90, "·  BAROMÈTRE D'ADHÉSION", color="#94A3B8", fontsize=14, weight="bold")
+    
+    # 4. Bloc principal du total
+    fig.text(0.07, 0.77, formater_nombre(adherents), color="#FFFFFF", fontsize=52, weight="heavy")
+    fig.text(0.46, 0.785, "adhérents", color="#38BDF8", fontsize=22, weight="bold")
+    
+    # 5. Bloc KPIs (24h et 7j)
+    ax_bg = fig.add_axes([0.65, 0.75, 0.28, 0.16], facecolor="#131C31")
+    ax_bg.axis("off")
+    p_bbox = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
+                            facecolor="#131C31", edgecolor="#1E2B4A", linewidth=1.2, transform=ax_bg.transAxes, clip_on=False)
+    ax_bg.add_patch(p_bbox)
+    ax_bg.text(0.12, 0.65, "DERNIÈRES 24H", color="#64748B", fontsize=9, weight="bold", transform=ax_bg.transAxes)
+    ax_bg.text(0.12, 0.25, f"+{formater_nombre(gain_24h)}", color="#10B981", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
+    ax_bg.text(0.58, 0.65, "SUR 7 JOURS", color="#64748B", fontsize=9, weight="bold", transform=ax_bg.transAxes)
+    ax_bg.text(0.58, 0.25, f"+{formater_nombre(gain_7j)}", color="#38BDF8", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
+    
+    # 6. Progression vers le cap de 5k
+    gain_tranche = adherents - cap_precedent
+    total_tranche = prochain_cap - cap_precedent
+    pct = int(min(100, max(0, (gain_tranche / total_tranche) * 100)))
+    reste = prochain_cap - adherents
+    
+    txt_cap = f"Cap {prochain_cap // 1000}k  (tranche {cap_precedent // 1000}k -> {prochain_cap // 1000}k)"
+    fig.text(0.07, 0.68, txt_cap, color="#F8FAFC", fontsize=13, weight="bold")
+    fig.text(0.07, 0.64, f"{pct} % atteint (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)})   —   Reste {formater_nombre(reste)} adhésions", 
+             color="#94A3B8", fontsize=11, weight="medium")
+    
+    # Barre de progression
+    bar_x, bar_y, bar_w, bar_h = 0.07, 0.59, 0.86, 0.03
+    bg_bar = FancyBboxPatch((bar_x, bar_y), bar_w, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
+                            facecolor="#1A243D", edgecolor="#2D3B60", linewidth=1.0, transform=fig.transFigure, clip_on=False)
+    fig.patches.append(bg_bar)
+    
+    w_fill = bar_w * (pct / 100.0)
+    if w_fill > 0.01:
+        fill_bar = FancyBboxPatch((bar_x, bar_y), w_fill, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
+                                  facecolor="#0066FF", edgecolor="#60A5FA", linewidth=0.8, transform=fig.transFigure, clip_on=False)
+        fig.patches.append(fill_bar)
+        
+    # 7. Courbe historique
     dates_hist, values_hist = [], []
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
-            reader = list(csv.reader(f))
-            for row in reader[1:]:
+            for row in list(csv.reader(f))[1:]:
                 try:
                     dates_hist.append(datetime.fromisoformat(row[0]))
                     values_hist.append(int(row[1]))
                 except (ValueError, IndexError):
                     continue
 
-    # Setup de la figure (Format 16:9 Twitter Card)
-    fig = plt.figure(figsize=(12, 6.75), dpi=100, facecolor="#0B132B")
-    ax = fig.add_subplot(111)
-    ax.set_facecolor("#0B132B")
-
-    # Trace de la courbe d'évolution en fond (dernier tiers bas)
     if len(dates_hist) >= 2:
-        # On garde les 14 derniers jours s'il y a du recul
-        cutoff = datetime.now(timezone.utc) - timedelta(days=14)
-        filtered = [(d, v) for d, v in zip(dates_hist, values_hist) if d >= cutoff]
-        if len(filtered) >= 2:
-            d_plot, v_plot = zip(*filtered)
-        else:
-            d_plot, v_plot = dates_hist, values_hist
-
-        ax_curve = fig.add_axes([0.08, 0.12, 0.84, 0.32], facecolor="none")
-        ax_curve.plot(d_plot, v_plot, color="#38BDF8", linewidth=3.5)
-        ax_curve.fill_between(d_plot, v_plot, min(v_plot) - 50, color="#38BDF8", alpha=0.15)
-        ax_curve.tick_params(colors="#94A3B8", labelsize=10)
+        ax_curve = fig.add_axes([0.07, 0.12, 0.86, 0.38], facecolor="#0E162B")
+        for spine in ax_curve.spines.values():
+            spine.set_visible(False)
+        ax_curve.spines["bottom"].set_visible(True)
+        ax_curve.spines["bottom"].set_color("#223052")
+        
+        ax_curve.plot(dates_hist, values_hist, color="#0066FF", linewidth=3.2, zorder=4)
+        ax_curve.scatter([dates_hist[-1]], [values_hist[-1]], color="#ED2939", s=65, zorder=5, edgecolor="#FFFFFF", linewidth=2)
+        
+        min_val = min(values_hist) - (max(values_hist) - min(values_hist)) * 0.15
+        ax_curve.fill_between(dates_hist, values_hist, min_val, color="#0066FF", alpha=0.18, zorder=3)
+        ax_curve.set_ylim(bottom=min_val)
+        ax_curve.grid(axis="y", color="#1E2B4A", linestyle="--", alpha=0.6, zorder=1)
+        ax_curve.tick_params(colors="#64748B", labelsize=10)
         ax_curve.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-        ax_curve.spines["top"].set_visible(False)
-        ax_curve.spines["right"].set_visible(False)
-        ax_curve.spines["left"].set_visible(False)
-        ax_curve.spines["bottom"].set_color("#334155")
-        ax_curve.grid(axis="y", color="#334155", linestyle="--", alpha=0.4)
 
-    # Textes & KPIs
-    pct_prog = int(((adherents - cap_precedent) / (prochain_cap - cap_precedent)) * 100)
-    pct_prog = max(0, min(100, pct_prog))
-
-    fig.text(0.08, 0.88, "NOUVELLE ÉNERGIE · SUIVI DES ADHÉSIONS", 
-             color="#94A3B8", fontsize=15, weight="bold")
-    fig.text(0.08, 0.73, formater_nombre(adherents), 
-             color="#FFFFFF", fontsize=50, weight="heavy")
-    fig.text(0.48, 0.74, "adhérents", 
-             color="#38BDF8", fontsize=24, weight="bold")
-
-    # Badges latéraux
-    fig.text(0.68, 0.84, f"+{formater_nombre(gain_24h)} en 24h", 
-             color="#34D399", fontsize=18, weight="bold")
-    fig.text(0.68, 0.77, f"+{formater_nombre(gain_7j)} sur 7j", 
-             color="#38BDF8", fontsize=18, weight="bold")
-
-    # Barre de progression graphique du cap
-    fig.text(0.08, 0.58, f"Progression vers le cap des {prochain_cap // 1000}k : {pct_prog} % (reste {formater_nombre(prochain_cap - adherents)})", 
-             color="#CBD5E1", fontsize=14, weight="medium")
-
-    # Rectangle jauge
-    rect_bg = plt.Rectangle((0.08, 0.51), 0.84, 0.035, transform=fig.transFigure,
-                            facecolor="#1E293B", edgecolor="none", clip_on=False)
-    fig.patches.append(rect_bg)
-    rect_fg = plt.Rectangle((0.08, 0.51), 0.84 * (pct_prog / 100), 0.035, transform=fig.transFigure,
-                            facecolor="#38BDF8", edgecolor="none", clip_on=False)
-    fig.patches.append(rect_fg)
-
-    ax.axis("off")
-    plt.savefig(output_path, dpi=100, bbox_inches="tight")
+    # 8. Pied de carte
+    fig.text(0.07, 0.045, "Source : Données publiques adhérents · unenouvelleenergie.fr", color="#475569", fontsize=9.5, weight="medium")
+    fig.text(0.79, 0.045, "@nouv_energie Tracker", color="#475569", fontsize=9.5, weight="bold")
+    
+    plt.savefig(output_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -281,8 +321,13 @@ def run():
     maintenant = datetime.now(timezone.utc)
     maintenant_iso = maintenant.isoformat()
 
+    # Archivage CSV
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
+
+    # Métriques
     gain_24h = calculer_gain_24h(maintenant, adherents)
+    cadence_txt = calculer_cadence_recente(CSV_FILE)
+    momentum_txt, moyenne_jour_7j = calculer_momentum(gain_24h, gain_7j)
 
     palier_actuel = (adherents // PAS_PALIER) * PAS_PALIER
     etat = lire_etat()
@@ -321,9 +366,16 @@ def run():
         prochain_cap = cap_precedent + PAS_CAP
         gain_depuis_palier = adherents - cap_precedent
         reste_avant_cap = prochain_cap - adherents
-        pct_tranche = int((gain_depuis_palier / PAS_CAP) * 100)
 
         jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
+
+        # Projection (ETA)
+        if moyenne_jour_7j > 0:
+            jours_restants = reste_avant_cap / moyenne_jour_7j
+            eta_date = maintenant + timedelta(days=jours_restants)
+            eta_texte = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]} {eta_date.year}"
+        else:
+            eta_texte = "Indéterminée"
 
         tweet_texte = (
             f"📊 @nouv_energie · Baromètre d'adhésion\n\n"
@@ -335,6 +387,7 @@ def run():
             f"{jauge_txt} (+{formater_nombre(gain_depuis_palier)} / {formater_nombre(PAS_CAP)})\n"
             f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
             f"▫️ Projection : {eta_texte}\n\n"
+            f"#NouvelleEnergie #DavidLisnard"
         )
 
         email_corps = (
@@ -346,7 +399,7 @@ def run():
             f"Publier directement : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}"
         )
 
-        # Génération du fichier PNG
+        # Génération du visuel PNG
         generer_carte_visuelle(
             adherents=adherents,
             gain_24h=gain_24h,
