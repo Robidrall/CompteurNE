@@ -378,12 +378,12 @@ def run():
             eta_texte = "Indéterminée"
 
         tweet_texte = (
-            f"📊 @CompteurNE · Baromètre\n\n"
-            f"👥 {formater_nombre(adherents)} adhérents\n"
+            f"📊 @nouv_energie · Baromètre\n\n"
+            f"👥 {formater_nombre(adherents)} adhérents\n\n"
             f"⚡ {cadence_txt}\n"
             f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n"
             f"{momentum_txt}\n\n"
-            f"Cap {prochain_cap // 1000}k ({jauge_txt}) :\n"
+            f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
             f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
             f"▫️ Projection : {eta_texte}"
         )
