@@ -9,10 +9,11 @@ import os
 import re
 import smtplib
 import sys
+import numpy as np
 import requests
 
 import matplotlib
-matplotlib.use("Agg")  # Mode headless sans interface graphique
+matplotlib.use("Agg")  # Mode headless
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import FancyBboxPatch
@@ -20,13 +21,15 @@ from matplotlib.patches import FancyBboxPatch
 # --- Paramètres généraux ---
 PAS_PALIER = 50        # Alerte tous les 50 nouveaux adhérents
 PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
-SEUIL_HEURES = 6       # Notification récurrente au bout de 6h sans nouveau palier
-TAILLE_BARRE = 10      # Longueur de la barre de progression textuelle
+SEUIL_HEURES = 6       # Notification récurrente max
+TAILLE_BARRE = 10      # Longueur de la jauge textuelle
 
 URL = "https://adherent.unenouvelleenergie.fr/parrainer"
+LIEN_ADHESION = "https://soutenir.unenouvelleenergie.fr/p/SZZQKUQB"
 CSV_FILE = "data/adherents.csv"
 STATE_FILE = "data/last_alert.json"
 CHART_FILE = "data/stats_card.png"
+CHART_12H_FILE = "data/stats_vitesse_12h.png"
 
 COOKIE = os.getenv("EA_SESSION")
 SMTP_USER = os.getenv("GMAIL_USER")
@@ -38,7 +41,6 @@ MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin",
 
 
 def formater_nombre(n: int) -> str:
-    """Formate les entiers avec des espaces insécables."""
     return f"{n:,}".replace(",", " ")
 
 
@@ -52,44 +54,34 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
 
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
-    """Calcule la cadence moyenne entre les deux derniers enregistrements du CSV ramenée à la minute."""
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
-
     with open(csv_file, "r", encoding="utf-8") as f:
         lignes = [r for r in csv.reader(f) if r]
-
-    # Il faut au moins l'en-tête et 2 relevés
     if len(lignes) < 3:
         return "Historique en cours de constitution"
 
-    row_prec = lignes[-2]
-    row_dernier = lignes[-1]
-
+    row_prec, row_dernier = lignes[-2], lignes[-1]
     try:
         dt_prec = datetime.fromisoformat(row_prec[0])
         dt_dernier = datetime.fromisoformat(row_dernier[0])
-        adh_prec = int(row_prec[1])
-        adh_dernier = int(row_dernier[1])
+        adh_prec, adh_dernier = int(row_prec[1]), int(row_dernier[1])
     except (ValueError, IndexError):
         return "Format invalide"
 
     delta_minutes = (dt_dernier - dt_prec).total_seconds() / 60
     delta_adh = adh_dernier - adh_prec
-
     if delta_minutes <= 0 or delta_adh <= 0:
         return "Rythme temporairement calme"
 
     adh_par_minute = delta_adh / delta_minutes
     if adh_par_minute >= 1.0:
         return f"~{adh_par_minute:.1f} adh. / min"
-
     minutes_par_adh = delta_minutes / delta_adh
     return f"1 adhésion toutes les {int(round(minutes_par_adh))} min"
 
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
-    """Calcule la tendance d'accélération vs la moyenne hebdomadaire."""
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
     if moyenne_jour > 0:
         ecart = ((gain_24h - moyenne_jour) / moyenne_jour) * 100
@@ -104,39 +96,34 @@ def calculer_momentum(gain_24h: int, gain_7j: int):
 
 def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int, 
                            cap_precedent: int, prochain_cap: int, output_path: str):
-    """Génère une carte statistique 1200x675 px moderne aux couleurs de la France."""
+    """Carte 1 : Baromètre global aux couleurs de la France."""
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-
     fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#0B101E")
     
-    # 1. Ruban tricolore supérieur (Bleu Marianne #002654, Blanc #FFFFFF, Rouge #ED2939)
-    band_height = 0.014
-    ax_banner = fig.add_axes([0, 1 - band_height, 1, band_height])
+    # Ruban tricolore
+    ax_banner = fig.add_axes([0, 0.986, 1, 0.014])
     ax_banner.axis("off")
     ax_banner.axvspan(0, 0.333, color="#002654")
     ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
     ax_banner.axvspan(0.666, 1.0, color="#ED2939")
     
-    # 2. Vignette drapeau tricolore
+    # Badge tricolore
     ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
     ax_flag.axis("off")
     ax_flag.axvspan(0, 0.333, color="#002654")
     ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
     ax_flag.axvspan(0.666, 1.0, color="#ED2939")
-    for spine in ax_flag.spines.values():
-        spine.set_color("#334155")
-        spine.set_visible(True)
-        spine.set_linewidth(0.8)
+    for s in ax_flag.spines.values():
+        s.set_color("#334155")
+        s.set_linewidth(0.8)
 
-    # 3. En-tête
     fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#FFFFFF", fontsize=15, weight="heavy")
     fig.text(0.305, 0.90, "·  BAROMÈTRE D'ADHÉSION", color="#94A3B8", fontsize=14, weight="bold")
     
-    # 4. Bloc principal du total
     fig.text(0.07, 0.77, formater_nombre(adherents), color="#FFFFFF", fontsize=52, weight="heavy")
     fig.text(0.46, 0.785, "adhérents", color="#38BDF8", fontsize=22, weight="bold")
     
-    # 5. Bloc KPIs (24h et 7j)
+    # Bloc KPIs
     ax_bg = fig.add_axes([0.65, 0.75, 0.28, 0.16], facecolor="#131C31")
     ax_bg.axis("off")
     p_bbox = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
@@ -147,7 +134,7 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
     ax_bg.text(0.58, 0.65, "SUR 7 JOURS", color="#64748B", fontsize=9, weight="bold", transform=ax_bg.transAxes)
     ax_bg.text(0.58, 0.25, f"+{formater_nombre(gain_7j)}", color="#38BDF8", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
     
-    # 6. Progression vers le cap de 5k
+    # Progression
     gain_tranche = adherents - cap_precedent
     total_tranche = prochain_cap - cap_precedent
     pct = int(min(100, max(0, (gain_tranche / total_tranche) * 100)))
@@ -158,7 +145,6 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
     fig.text(0.07, 0.64, f"{pct} % atteint (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)})   —   Reste {formater_nombre(reste)} adhésions", 
              color="#94A3B8", fontsize=11, weight="medium")
     
-    # Barre de progression
     bar_x, bar_y, bar_w, bar_h = 0.07, 0.59, 0.86, 0.03
     bg_bar = FancyBboxPatch((bar_x, bar_y), bar_w, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
                             facecolor="#1A243D", edgecolor="#2D3B60", linewidth=1.0, transform=fig.transFigure, clip_on=False)
@@ -170,7 +156,6 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
                                   facecolor="#0066FF", edgecolor="#60A5FA", linewidth=0.8, transform=fig.transFigure, clip_on=False)
         fig.patches.append(fill_bar)
         
-    # 7. Courbe historique
     dates_hist, values_hist = [], []
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
@@ -187,7 +172,6 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
             spine.set_visible(False)
         ax_curve.spines["bottom"].set_visible(True)
         ax_curve.spines["bottom"].set_color("#223052")
-        
         ax_curve.plot(dates_hist, values_hist, color="#0066FF", linewidth=3.2, zorder=4)
         ax_curve.scatter([dates_hist[-1]], [values_hist[-1]], color="#ED2939", s=65, zorder=5, edgecolor="#FFFFFF", linewidth=2)
         
@@ -198,12 +182,136 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
         ax_curve.tick_params(colors="#64748B", labelsize=10)
         ax_curve.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
 
-    # 8. Pied de carte
     fig.text(0.07, 0.045, "Source : Données publiques adhérents · unenouvelleenergie.fr", color="#475569", fontsize=9.5, weight="medium")
     fig.text(0.79, 0.045, "@CompteurNE", color="#475569", fontsize=9.5, weight="bold")
-    
     plt.savefig(output_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
+
+
+def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
+    """Carte 2 : Analyse 12h, f(t) cumul, f'(t) vitesse et écriture explicite des formules."""
+    if not os.path.isfile(CSV_FILE):
+        return 0, 0, "f(t) indisponible", "f'(t) indisponible"
+
+    dates_raw, adh_raw = [], []
+    with open(CSV_FILE, "r", encoding="utf-8") as f:
+        for r in list(csv.reader(f))[1:]:
+            try:
+                dates_raw.append(datetime.fromisoformat(r[0]))
+                adh_raw.append(int(r[1]))
+            except (ValueError, IndexError):
+                continue
+
+    if len(dates_raw) < 3:
+        return 0, 0, "f(t) indisponible", "f'(t) indisponible"
+
+    t_max = dates_raw[-1]
+    t_min_12h = t_max - timedelta(hours=12)
+
+    # Filtrage des points sur la fenêtre de 12 heures
+    points_12h = [(d, v) for d, v in zip(dates_raw, adh_raw) if d >= t_min_12h]
+    if len(points_12h) < 4:
+        points_12h = list(zip(dates_raw[-8:], adh_raw[-8:]))
+
+    d_12h, v_12h = zip(*points_12h)
+    t0 = d_12h[0]
+    x_hours = np.array([(d - t0).total_seconds() / 3600.0 for d in d_12h])
+    y_vals = np.array(v_12h)
+
+    # Régression polynomiale d'ordre 2 : f(t) = at² + bt + c
+    poly = np.polyfit(x_hours, y_vals, deg=2)
+    a, b, c = poly
+    p = np.poly1d(poly)
+    p_deriv = p.deriv()  # Dérivée f'(t) = 2at + b en adhérents/heure
+
+    # Grille fine pour les courbes
+    grid_x = np.linspace(0, x_hours[-1], 200)
+    grid_dt = [t0 + timedelta(hours=h) for h in grid_x]
+    grid_y = p(grid_x)
+    grid_dy = p_deriv(grid_x)
+
+    vitesse_actuelle_h = max(0, grid_dy[-1])
+    gain_total_12h = y_vals[-1] - y_vals[0]
+
+    # Formules textuelles
+    b_sign = "+" if b >= 0 else "-"
+    c_sign = "+" if c >= 0 else "-"
+    formule_ft = f"f(t) = {a:+.2f}t² {b_sign} {abs(b):.1f}t {c_sign} {abs(int(c)):,}".replace(",", " ")
+    formule_fprime = f"f'(t) = {2*a:+.2f}t {b_sign} {abs(b):.1f}"
+
+    fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#0B101E")
+
+    # Ruban et badge tricolore
+    ax_banner = fig.add_axes([0, 0.986, 1, 0.014])
+    ax_banner.axis("off")
+    ax_banner.axvspan(0, 0.333, color="#002654")
+    ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
+    ax_banner.axvspan(0.666, 1.0, color="#ED2939")
+
+    ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
+    ax_flag.axis("off")
+    ax_flag.axvspan(0, 0.333, color="#002654")
+    ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
+    ax_flag.axvspan(0.666, 1.0, color="#ED2939")
+    for s in ax_flag.spines.values():
+        s.set_color("#334155")
+        s.set_linewidth(0.8)
+
+    fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#FFFFFF", fontsize=15, weight="heavy")
+    fig.text(0.305, 0.90, "·  ANALYSE DYNAMIQUE (12H)", color="#94A3B8", fontsize=14, weight="bold")
+
+    # KPIs droite
+    ax_kpi = fig.add_axes([0.62, 0.77, 0.31, 0.14], facecolor="#131C31")
+    ax_kpi.axis("off")
+    p_box = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
+                           facecolor="#131C31", edgecolor="#1E2B4A", linewidth=1.2, transform=ax_kpi.transAxes, clip_on=False)
+    ax_kpi.add_patch(p_box)
+    ax_kpi.text(0.08, 0.65, "GAIN SUR 12H", color="#64748B", fontsize=9, weight="bold", transform=ax_kpi.transAxes)
+    ax_kpi.text(0.08, 0.22, f"+{formater_nombre(gain_total_12h)}", color="#10B981", fontsize=18, weight="heavy", transform=ax_kpi.transAxes)
+    ax_kpi.text(0.55, 0.65, "VITESSE ACTUELLE", color="#64748B", fontsize=9, weight="bold", transform=ax_kpi.transAxes)
+    ax_kpi.text(0.55, 0.22, f"~{int(vitesse_actuelle_h)} adh/h", color="#38BDF8", fontsize=18, weight="heavy", transform=ax_kpi.transAxes)
+
+    # Écriture des formules au-dessus des graphes
+    fig.text(0.07, 0.81, "Modélisation : f(t) [cumul] & f'(t) [vitesse]", color="#FFFFFF", fontsize=18, weight="bold")
+    fig.text(0.07, 0.75, f"{formule_ft}   |   {formule_fprime}", color="#38BDF8", fontsize=12, weight="bold")
+
+    # Graphe 1 : f(t)
+    ax1 = fig.add_axes([0.07, 0.44, 0.86, 0.26], facecolor="#0E162B")
+    for spine in ax1.spines.values():
+        spine.set_visible(False)
+    ax1.spines["bottom"].set_visible(True)
+    ax1.spines["bottom"].set_color("#223052")
+    ax1.plot(grid_dt, grid_y, color="#0066FF", linewidth=2.8, zorder=4)
+    ax1.scatter(d_12h, v_12h, color="#FFFFFF", s=30, zorder=5, edgecolor="#0066FF", linewidth=1.5)
+    ax1.scatter([d_12h[-1]], [v_12h[-1]], color="#ED2939", s=60, zorder=6, edgecolor="#FFFFFF", linewidth=2)
+    ax1.fill_between(grid_dt, grid_y, min(grid_y) - 20, color="#0066FF", alpha=0.15, zorder=3)
+    ax1.set_ylim(bottom=min(grid_y) - 20)
+    ax1.set_ylabel("f(t) Adhérents", color="#94A3B8", fontsize=10, weight="bold")
+    ax1.tick_params(colors="#64748B", labelsize=9)
+    ax1.grid(axis="y", color="#1E2B4A", linestyle="--", alpha=0.5)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+
+    # Graphe 2 : f'(t)
+    ax2 = fig.add_axes([0.07, 0.12, 0.86, 0.24], facecolor="#0E162B")
+    for spine in ax2.spines.values():
+        spine.set_visible(False)
+    ax2.spines["bottom"].set_visible(True)
+    ax2.spines["bottom"].set_color("#223052")
+    ax2.plot(grid_dt, grid_dy, color="#10B981", linewidth=2.5, zorder=4)
+    ax2.fill_between(grid_dt, grid_dy, max(0, min(grid_dy) * 0.8), color="#10B981", alpha=0.18, zorder=3)
+    ax2.scatter([grid_dt[-1]], [grid_dy[-1]], color="#ED2939", s=55, zorder=6, edgecolor="#FFFFFF", linewidth=2)
+    ax2.set_ylabel("f'(t) adh/h", color="#10B981", fontsize=10, weight="bold")
+    ax2.tick_params(colors="#64748B", labelsize=9)
+    ax2.grid(axis="y", color="#1E2B4A", linestyle="--", alpha=0.5)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+
+    fig.text(0.07, 0.045, "Source : Données publiques · Modélisation polynomiale d'afflux (t en heures)", color="#475569", fontsize=9.5, weight="medium")
+    fig.text(0.79, 0.045, "@CompteurNE", color="#475569", fontsize=9.5, weight="bold")
+
+    plt.savefig(output_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+    return gain_total_12h, vitesse_actuelle_h, formule_ft, formule_fprime
 
 
 def extraire_donnees():
@@ -242,15 +350,12 @@ def sauvegarder_csv(iso_date, adherents, gain_7j):
 def calculer_gain_24h(maintenant, adherents_actuels):
     if not os.path.isfile(CSV_FILE):
         return 0
-        
     cible = maintenant - timedelta(hours=24)
     adherents_24h = None
-    
     with open(CSV_FILE, "r", encoding="utf-8") as f:
         lignes = list(csv.reader(f))
         if len(lignes) <= 1:
             return 0
-            
         for row in reversed(lignes[1:]):
             try:
                 dt = datetime.fromisoformat(row[0])
@@ -259,10 +364,8 @@ def calculer_gain_24h(maintenant, adherents_actuels):
                     break
             except ValueError:
                 continue
-                
         if adherents_24h is None:
             adherents_24h = int(lignes[1][1])
-            
     return adherents_actuels - adherents_24h
 
 
@@ -286,7 +389,7 @@ def ecrire_etat(iso_date, adherents, dernier_palier):
         }, f, indent=2)
 
 
-def envoyer_email(sujet, contenu, image_path=None):
+def envoyer_email(sujet, contenu, images=None):
     msg = MIMEMultipart()
     msg["Subject"] = sujet
     msg["From"] = SMTP_USER
@@ -294,18 +397,20 @@ def envoyer_email(sujet, contenu, image_path=None):
 
     msg.attach(MIMEText(contenu, "plain", "utf-8"))
 
-    if image_path and os.path.isfile(image_path):
-        with open(image_path, "rb") as f:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(image_path)}"')
-            msg.attach(part)
+    if images:
+        for img_path in images:
+            if os.path.isfile(img_path):
+                with open(img_path, "rb") as f:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(f.read())
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(img_path)}"')
+                    msg.attach(part)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(SMTP_USER, SMTP_PASS)
         server.sendmail(SMTP_USER, [DESTINATAIRE], msg.as_string())
-    print(f"E-mail (avec visuel) envoyé avec succès à {DESTINATAIRE}", flush=True)
+    print(f"E-mail (avec les 2 visuels) envoyé avec succès à {DESTINATAIRE}", flush=True)
 
 
 def run():
@@ -321,10 +426,8 @@ def run():
     maintenant = datetime.now(timezone.utc)
     maintenant_iso = maintenant.isoformat()
 
-    # Archivage CSV
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
 
-    # Métriques
     gain_24h = calculer_gain_24h(maintenant, adherents)
     cadence_txt = calculer_cadence_recente(CSV_FILE)
     momentum_txt, moyenne_jour_7j = calculer_momentum(gain_24h, gain_7j)
@@ -345,7 +448,6 @@ def run():
     doit_notifier = False
     titre_sujet = ""
 
-    # Détection des événements
     franchissement_5k = (adherents // PAS_CAP) > (dernier_total // PAS_CAP)
     palier_5k_franchi = (adherents // PAS_CAP) * PAS_CAP
 
@@ -364,12 +466,10 @@ def run():
     if doit_notifier:
         cap_precedent = (adherents // PAS_CAP) * PAS_CAP
         prochain_cap = cap_precedent + PAS_CAP
-        gain_depuis_palier = adherents - cap_precedent
         reste_avant_cap = prochain_cap - adherents
 
         jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
 
-        # Projection (ETA)
         if moyenne_jour_7j > 0:
             jours_restants = reste_avant_cap / moyenne_jour_7j
             eta_date = maintenant + timedelta(days=jours_restants)
@@ -377,6 +477,7 @@ def run():
         else:
             eta_texte = "Indéterminée"
 
+        # Tweet 1 : Baromètre principal (aéré avec @nouv_energie)
         tweet_texte = (
             f"📊 @nouv_energie · Baromètre\n\n"
             f"👥 {formater_nombre(adherents)} adhérents\n\n"
@@ -388,26 +489,38 @@ def run():
             f"▫️ Projection : {eta_texte}"
         )
 
+        # Génération des 2 visuels
+        generer_carte_visuelle(adherents, gain_24h, gain_7j, cap_precedent, prochain_cap, CHART_FILE)
+        gain_12h, v_h, formule_ft, formule_fprime = generer_carte_vitesse_12h(CHART_12H_FILE)
+
+        # Tweet 2 : Analyse 12h, formules mathématiques et lien d'adhésion
+        tweet_2 = (
+            f"⚡ @nouv_energie · Demi-journée (12h)\n\n"
+            f"📈 +{formater_nombre(gain_12h)} en 12h (vitesse : ~{int(v_h)} adh/h)\n\n"
+            f"📐 {formule_ft}\n"
+            f"⚡ {formule_fprime}\n\n"
+            f"Plus que {formater_nombre(reste_avant_cap)} avant les {prochain_cap // 1000}k ! Booster f'(t) 👇\n"
+            f"{LIEN_ADHESION}"
+        )
+
         email_corps = (
             f"Bonjour,\n\n"
-            f"Le nouveau visuel statistique a été généré et est en pièce jointe (stats_card.png).\n\n"
-            f"--- TWEET PRÊT À PUBLIER ---\n\n"
+            f"Nouveau point d'étape disponible. Les 2 visuels sont en pièces jointes :\n"
+            f"1. stats_card.png (Baromètre)\n"
+            f"2. stats_vitesse_12h.png (Dynamique 12h f(t) / f'(t))\n\n"
+            f"===================================================\n"
+            f"--- TWEET 1 (Baromètre + stats_card.png) ---\n"
+            f"===================================================\n"
             f"{tweet_texte}\n\n"
-            f"-----------------------------\n"
-            f"Publier directement : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}"
+            f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
+            f"===================================================\n"
+            f"--- TWEET 2 (Réponse au 1er + stats_vitesse_12h.png) ---\n"
+            f"===================================================\n"
+            f"{tweet_2}\n\n"
+            f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_2)}"
         )
 
-        # Génération du visuel PNG
-        generer_carte_visuelle(
-            adherents=adherents,
-            gain_24h=gain_24h,
-            gain_7j=gain_7j,
-            cap_precedent=cap_precedent,
-            prochain_cap=prochain_cap,
-            output_path=CHART_FILE
-        )
-
-        envoyer_email(titre_sujet, email_corps, image_path=CHART_FILE)
+        envoyer_email(titre_sujet, email_corps, images=[CHART_FILE, CHART_12H_FILE])
         ecrire_etat(maintenant_iso, adherents, dernier_palier)
     else:
         print(f"Pas d'alerte requise ({adherents} adhérents).", flush=True)
