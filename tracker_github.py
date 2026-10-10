@@ -19,9 +19,9 @@ import matplotlib.dates as mdates
 from matplotlib.patches import FancyBboxPatch
 
 # --- Paramètres généraux ---
-PAS_PALIER = 50        # Alerte tous les 50 nouveaux adhérents
+PAS_PALIER = 25        # Alerte tous les 50 nouveaux adhérents
 PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
-SEUIL_HEURES = 6       # Notification récurrente max
+SEUIL_HEURES = 2       # Notification récurrente max
 TAILLE_BARRE = 8      # Longueur de la jauge textuelle
 
 URL = "https://adherent.unenouvelleenergie.fr/parrainer"
