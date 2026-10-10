@@ -189,7 +189,10 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
 
 
 def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
-    """Carte 2 : Analyse 12h, f(t) cumul, f'(t) vitesse et écriture explicite des formules."""
+    """Calcule la vitesse instantanée f'(t) sur les 3 dernières heures (régime homogène)
+
+    tout en affichant l'évolution des 12 dernières heures sur le graphique.
+    """
     if not os.path.isfile(CSV_FILE):
         return 0, 0, "f(t) indisponible", "f'(t) indisponible"
 
@@ -205,40 +208,62 @@ def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
     if len(dates_raw) < 3:
         return 0, 0, "f(t) indisponible", "f'(t) indisponible"
 
-    t_max = dates_raw[-1]
-    t_min_12h = t_max - timedelta(hours=12)
+    t_maintenant = dates_raw[-1]
+    t_min_12h = t_maintenant - timedelta(hours=12)
+    t_min_vitesse = t_maintenant - timedelta(hours=3)  # Fenêtre active récente (2 à 3h)
 
-    # Filtrage des points sur la fenêtre de 12 heures
-    points_12h = [(d, v) for d, v in zip(dates_raw, adh_raw) if d >= t_min_12h]
-    if len(points_12h) < 4:
-        points_12h = list(zip(dates_raw[-8:], adh_raw[-8:]))
+    # 1. Données globales 12h pour le tracé de la courbe
+    pts_12h = [(d, v) for d, v in zip(dates_raw, adh_raw) if d >= t_min_12h]
+    if len(pts_12h) < 4:
+        pts_12h = list(zip(dates_raw[-8:], adh_raw[-8:]))
+    d_12h, v_12h = zip(*pts_12h)
+    gain_total_12h = v_12h[-1] - v_12h[0]
 
-    d_12h, v_12h = zip(*points_12h)
-    t0 = d_12h[0]
-    x_hours = np.array([(d - t0).total_seconds() / 3600.0 for d in d_12h])
-    y_vals = np.array(v_12h)
+    # 2. Données restreintes pour la vitesse réelle (évite le biais du creux nocturne)
+    pts_vitesse = [(d, v) for d, v in zip(dates_raw, adh_raw) if d >= t_min_vitesse]
+    if len(pts_vitesse) < 3:
+        pts_vitesse = list(zip(dates_raw[-4:], adh_raw[-4:]))
 
-    # Régression polynomiale d'ordre 2 : f(t) = at² + bt + c
-    poly = np.polyfit(x_hours, y_vals, deg=2)
-    a, b, c = poly
-    p = np.poly1d(poly)
-    p_deriv = p.deriv()  # Dérivée f'(t) = 2at + b en adhérents/heure
+    d_vit, v_vit = zip(*pts_vitesse)
+    t0_vit = d_vit[0]
+    x_vit = np.array([(d - t0_vit).total_seconds() / 3600.0 for d in d_vit])
+    y_vit = np.array(v_vit)
 
-    # Grille fine pour les courbes
-    grid_x = np.linspace(0, x_hours[-1], 200)
-    grid_dt = [t0 + timedelta(hours=h) for h in grid_x]
-    grid_y = p(grid_x)
-    grid_dy = p_deriv(grid_x)
+    # Modélisation sur régime homogène :
+    # Si >= 5 points : quadratique, sinon linéaire
+    if len(x_vit) >= 5:
+        poly = np.polyfit(x_vit, y_vit, deg=2)
+        a, b, c = poly
+        p = np.poly1d(poly)
+        p_deriv = p.deriv()
+        vitesse_actuelle_h = max(0, p_deriv(x_vit[-1]))
 
-    vitesse_actuelle_h = max(0, grid_dy[-1])
-    gain_total_12h = y_vals[-1] - y_vals[0]
+        b_sign = "+" if b >= 0 else "-"
+        c_sign = "+" if c >= 0 else "-"
+        formule_ft = f"f(t) = {a:+.2f}t² {b_sign} {abs(b):.1f}t {c_sign} {abs(int(c)):,}".replace(",", " ")
+        formule_fprime = f"f'(t) = {2*a:+.2f}t {b_sign} {abs(b):.1f}"
+    else:
+        # Régression linéaire stricte : vitesse stable sans artefact
+        poly = np.polyfit(x_vit, y_vit, deg=1)
+        a, b = poly
+        vitesse_actuelle_h = max(0, a)
+        b_sign = "+" if b >= 0 else "-"
+        formule_ft = f"f(t) = {a:+.1f}t {b_sign} {abs(int(b)):,}".replace(",", " ")
+        formule_fprime = f"f'(t) = {a:.1f} adh/h"
 
-    # Formules textuelles
-    b_sign = "+" if b >= 0 else "-"
-    c_sign = "+" if c >= 0 else "-"
-    formule_ft = f"f(t) = {a:+.2f}t² {b_sign} {abs(b):.1f}t {c_sign} {abs(int(c)):,}".replace(",", " ")
-    formule_fprime = f"f'(t) = {2*a:+.2f}t {b_sign} {abs(b):.1f}"
+    # Grille de tracé pour le graphique
+    t0_12h = d_12h[0]
+    x_12h = np.array([(d - t0_12h).total_seconds() / 3600.0 for d in d_12h])
+    poly_plot = np.polyfit(x_12h, np.array(v_12h), deg=min(2, len(x_12h) - 1))
+    p_plot = np.poly1d(poly_plot)
+    p_deriv_plot = p_plot.deriv()
 
+    grid_x = np.linspace(0, x_12h[-1], 200)
+    grid_dt = [t0_12h + timedelta(hours=h) for h in grid_x]
+    grid_y = p_plot(grid_x)
+    grid_dy = np.maximum(0, p_deriv_plot(grid_x))
+
+    # --- Rendu Figure Matplotlib ---
     fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#0B101E")
 
     # Ruban et badge tricolore
@@ -260,7 +285,7 @@ def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
     fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#FFFFFF", fontsize=15, weight="heavy")
     fig.text(0.305, 0.90, "·  ANALYSE DYNAMIQUE (12H)", color="#94A3B8", fontsize=14, weight="bold")
 
-    # KPIs droite
+    # Boîte KPIs
     ax_kpi = fig.add_axes([0.62, 0.77, 0.31, 0.14], facecolor="#131C31")
     ax_kpi.axis("off")
     p_box = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
@@ -271,7 +296,7 @@ def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
     ax_kpi.text(0.55, 0.65, "VITESSE ACTUELLE", color="#64748B", fontsize=9, weight="bold", transform=ax_kpi.transAxes)
     ax_kpi.text(0.55, 0.22, f"~{int(vitesse_actuelle_h)} adh/h", color="#38BDF8", fontsize=18, weight="heavy", transform=ax_kpi.transAxes)
 
-    # Écriture des formules au-dessus des graphes
+    # Formules
     fig.text(0.07, 0.81, "Modélisation : f(t) [cumul] & f'(t) [vitesse]", color="#FFFFFF", fontsize=18, weight="bold")
     fig.text(0.07, 0.75, f"{formule_ft}   |   {formule_fprime}", color="#38BDF8", fontsize=12, weight="bold")
 
@@ -298,14 +323,14 @@ def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
     ax2.spines["bottom"].set_visible(True)
     ax2.spines["bottom"].set_color("#223052")
     ax2.plot(grid_dt, grid_dy, color="#10B981", linewidth=2.5, zorder=4)
-    ax2.fill_between(grid_dt, grid_dy, max(0, min(grid_dy) * 0.8), color="#10B981", alpha=0.18, zorder=3)
+    ax2.fill_between(grid_dt, grid_dy, 0, color="#10B981", alpha=0.18, zorder=3)
     ax2.scatter([grid_dt[-1]], [grid_dy[-1]], color="#ED2939", s=55, zorder=6, edgecolor="#FFFFFF", linewidth=2)
     ax2.set_ylabel("f'(t) adh/h", color="#10B981", fontsize=10, weight="bold")
     ax2.tick_params(colors="#64748B", labelsize=9)
     ax2.grid(axis="y", color="#1E2B4A", linestyle="--", alpha=0.5)
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
-    fig.text(0.07, 0.045, "Source : Données publiques · Modélisation polynomiale d'afflux (t en heures)", color="#475569", fontsize=9.5, weight="medium")
+    fig.text(0.07, 0.045, "Source : Données publiques · Dynamique instantanée calculée sur régime actif", color="#475569", fontsize=9.5, weight="medium")
     fig.text(0.79, 0.045, "@CompteurNE", color="#475569", fontsize=9.5, weight="bold")
 
     plt.savefig(output_path, dpi=120, bbox_inches="tight")
