@@ -127,7 +127,7 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
     pct_prog = max(0, min(100, pct_prog))
 
     fig.text(0.08, 0.88, "NOUVELLE ÉNERGIE · SUIVI DES ADHÉSIONS", 
-             color="#94A3B8", fontsize=15, weight="bold", letterspacing=1.5)
+             color="#94A3B8", fontsize=15, weight="bold")
     fig.text(0.08, 0.73, formater_nombre(adherents), 
              color="#FFFFFF", fontsize=50, weight="heavy")
     fig.text(0.48, 0.74, "adhérents", 
