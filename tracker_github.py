@@ -132,113 +132,258 @@ def calculer_momentum(gain_24h: int, gain_7j: int):
     return "⚪ Données en cours d'acquisition", moyenne_jour
 
 
-def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int, 
-                           cap_precedent: int, prochain_cap: int, output_path: str):
-    """Carte 1 : Baromètre global avec un fond très clair, sobre et institutionnel."""
-    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
-    
-    # 1. Figure et couleur de fond claire / sobre (gris très clair)
-    fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#F4F5F7")
-    
-    # Ruban tricolore
-    ax_banner = fig.add_axes([0, 0.986, 1, 0.014])
-    ax_banner.axis("off")
-    ax_banner.axvspan(0, 0.333, color="#002654")
-    ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
-    ax_banner.axvspan(0.666, 1.0, color="#ED2939")
-    
-    # Badge tricolore
-    ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
-    ax_flag.axis("off")
-    ax_flag.axvspan(0, 0.333, color="#002654")
-    ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
-    ax_flag.axvspan(0.666, 1.0, color="#ED2939")
-    for s in ax_flag.spines.values():
-        s.set_color("#BDC3C7")
-        s.set_linewidth(0.8)
+# --- Jalons historiques de référence ---
+JALONS_HISTORIQUES = [
+    (datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc), 26500),
+    (datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc), 29500),
+    (datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc), 34651),
+]
 
-    # 2. En-tête (Textes sombres)
-    fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#0A192F", fontsize=15, weight="heavy")
-    fig.text(0.305, 0.90, "·  BAROMÈTRE D'ADHÉSION", color="#5A6B82", fontsize=14, weight="bold")
-    
-    # 3. Affichage du chiffre (Bleu nuit profond / bleu roi discret)
-    fig.text(0.07, 0.77, formater_nombre(adherents), color="#0A192F", fontsize=52, weight="heavy")
-    fig.text(0.46, 0.785, "adhérents", color="#0066FF", fontsize=22, weight="bold")
-    
-    # 4. Bloc KPIs (Glassmorphism clair / gris doux)
-    ax_bg = fig.add_axes([0.65, 0.75, 0.28, 0.16], facecolor="#EBF0F5")
-    ax_bg.axis("off")
-    p_bbox = FancyBboxPatch((0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
-                            facecolor="#EBF0F5", edgecolor="#CFD8E1", linewidth=1.2, transform=ax_bg.transAxes, clip_on=False)
-    ax_bg.add_patch(p_bbox)
-    ax_bg.text(0.12, 0.65, "DERNIÈRES 24H", color="#5A6B82", fontsize=9, weight="bold", transform=ax_bg.transAxes)
-    ax_bg.text(0.12, 0.25, f"+{formater_nombre(gain_24h)}", color="#0F8A5F", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
-    ax_bg.text(0.58, 0.65, "SUR 7 JOURS", color="#5A6B82", fontsize=9, weight="bold", transform=ax_bg.transAxes)
-    ax_bg.text(0.58, 0.25, f"+{formater_nombre(gain_7j)}", color="#0066FF", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
-    
-    # 5. Progression (Camaïeu de gris et bleu roi)
-    gain_tranche = adherents - cap_precedent
-    total_tranche = prochain_cap - cap_precedent
-    pct = int(min(100, max(0, (gain_tranche / total_tranche) * 100)))
-    reste = prochain_cap - adherents
-    
-    txt_cap = f"Cap {prochain_cap // 1000}k  (tranche {cap_precedent // 1000}k -> {prochain_cap // 1000}k)"
-    fig.text(0.07, 0.68, txt_cap, color="#0A192F", fontsize=13, weight="bold")
-    fig.text(0.07, 0.64, f"{pct} % atteint (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)})   —   Reste {formater_nombre(reste)} adhésions", 
-             color="#5A6B82", fontsize=11, weight="medium")
-    
-    # Barres de progression avec couleurs douces adaptées au fond clair
-    bar_x, bar_y, bar_w, bar_h = 0.07, 0.59, 0.86, 0.03
-    bg_bar = FancyBboxPatch((bar_x, bar_y), bar_w, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
-                            facecolor="#E2E8F0", edgecolor="#CBD5E1", linewidth=1.0, transform=fig.transFigure, clip_on=False)
-    fig.patches.append(bg_bar)
-    
-    w_fill = bar_w * (pct / 100.0)
-    if w_fill > 0.01:
-        fill_bar = FancyBboxPatch((bar_x, bar_y), w_fill, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
-                                  facecolor="#0066FF", edgecolor="#3B82F6", linewidth=0.8, transform=fig.transFigure, clip_on=False)
-        fig.patches.append(fill_bar)
-        
-    dates_hist, values_hist = [], []
-    if os.path.isfile(CSV_FILE):
-        with open(CSV_FILE, "r", encoding="utf-8") as f:
-            for row in list(csv.reader(f))[1:]:
-                try:
-                    dates_hist.append(datetime.fromisoformat(row[0]))
-                    values_hist.append(int(row[1]))
-                except (ValueError, IndexError):
-                    continue
 
-    # 6. Graphe (Ajustement avec des tons clairs et légers)
-    if len(dates_hist) >= 2:
-        ax_curve = fig.add_axes([0.07, 0.12, 0.86, 0.38], facecolor="#FFFFFF")
-        for spine in ax_curve.spines.values():
-            spine.set_visible(False)
-        ax_curve.spines["bottom"].set_visible(True)
-        ax_curve.spines["bottom"].set_color("#CBD5E1")
-        
-        # Courbe principale bleu roi
-        ax_curve.plot(dates_hist, values_hist, color="#0066FF", linewidth=3.2, zorder=4)
-        
-        # Dernier point (accent rouge)
-        ax_curve.scatter([dates_hist[-1]], [values_hist[-1]], color="#ED2939", s=65, zorder=5, edgecolor="#FFFFFF", linewidth=2)
-        
-        # Remplissage dégradé bleu translucide
-        min_val = min(values_hist) - (max(values_hist) - min(values_hist)) * 0.15
-        ax_curve.fill_between(dates_hist, values_hist, min_val, color="#0066FF", alpha=0.08, zorder=3)
-        ax_curve.set_ylim(bottom=min_val)
-        
-        # Grilles claires
-        ax_curve.grid(axis="y", color="#E2E8F0", linestyle="--", alpha=0.8, zorder=1)
-        ax_curve.tick_params(colors="#475569", labelsize=10)
-        ax_curve.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+def generer_carte_visuelle(
+    adherents: int,
+    gain_24h: int,
+    gain_7j: int,
+    cap_precedent: int,
+    prochain_cap: int,
+    output_path: str,
+):
+  """Carte 1 : Baromètre global sobre et lumineux aux couleurs de la France."""
+  os.makedirs(
+      os.path.dirname(output_path) if os.path.dirname(output_path) else ".",
+      exist_ok=True,
+  )
 
-    # Footers
-    fig.text(0.07, 0.045, "Source : Données publiques adhérents · unenouvelleenergie.fr", color="#5A6B82", fontsize=9.5, weight="medium")
-    fig.text(0.79, 0.045, "@CompteurNE", color="#5A6B82", fontsize=9.5, weight="bold")
-    
-    plt.savefig(output_path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
+  fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#F8FAFC")
+
+  # 1. Ruban tricolore supérieur (Bleu #002654, Blanc #FFFFFF, Rouge #ED2939)
+  band_height = 0.014
+  ax_banner = fig.add_axes([0, 1 - band_height, 1, band_height])
+  ax_banner.axis("off")
+  ax_banner.axvspan(0, 0.333, color="#002654")
+  ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
+  ax_banner.axvspan(0.666, 1.0, color="#ED2939")
+
+  # 2. Vignette drapeau tricolore
+  ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
+  ax_flag.axis("off")
+  ax_flag.axvspan(0, 0.333, color="#002654")
+  ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
+  ax_flag.axvspan(0.666, 1.0, color="#ED2939")
+  for s in ax_flag.spines.values():
+    s.set_color("#CBD5E1")
+    s.set_linewidth(0.8)
+
+  # 3. En-tête
+  fig.text(
+      0.105,
+      0.90,
+      "NOUVELLE ÉNERGIE",
+      color="#0F172A",
+      fontsize=15,
+      weight="heavy",
+  )
+  fig.text(
+      0.305,
+      0.90,
+      "·  BAROMÈTRE D'ADHÉSION",
+      color="#64748B",
+      fontsize=14,
+      weight="bold",
+  )
+
+  # 4. Bloc principal du total
+  fig.text(
+      0.07,
+      0.77,
+      formater_nombre(adherents),
+      color="#0F172A",
+      fontsize=52,
+      weight="heavy",
+  )
+  fig.text(0.46, 0.785, "adhérents", color="#0284C7", fontsize=22, weight="bold")
+
+  # 5. Bloc KPIs (carte blanche avec bordure discrète)
+  ax_bg = fig.add_axes([0.65, 0.75, 0.28, 0.16], facecolor="#FFFFFF")
+  ax_bg.axis("off")
+  p_bbox = FancyBboxPatch(
+      (0, 0),
+      1,
+      1,
+      boxstyle="round,pad=0.04,rounding_size=0.15",
+      facecolor="#FFFFFF",
+      edgecolor="#E2E8F0",
+      linewidth=1.2,
+      transform=ax_bg.transAxes,
+      clip_on=False,
+  )
+  ax_bg.add_patch(p_bbox)
+  ax_bg.text(
+      0.12,
+      0.65,
+      "DERNIÈRES 24H",
+      color="#64748B",
+      fontsize=9,
+      weight="bold",
+      transform=ax_bg.transAxes,
+  )
+  ax_bg.text(
+      0.12,
+      0.25,
+      f"+{formater_nombre(gain_24h)}",
+      color="#059669",
+      fontsize=18,
+      weight="heavy",
+      transform=ax_bg.transAxes,
+  )
+  ax_bg.text(
+      0.58,
+      0.65,
+      "SUR 7 JOURS",
+      color="#64748B",
+      fontsize=9,
+      weight="bold",
+      transform=ax_bg.transAxes,
+  )
+  ax_bg.text(
+      0.58,
+      0.25,
+      f"+{formater_nombre(gain_7j)}",
+      color="#0284C7",
+      fontsize=18,
+      weight="heavy",
+      transform=ax_bg.transAxes,
+  )
+
+  # 6. Progression vers le cap de 5k
+  gain_tranche = adherents - cap_precedent
+  total_tranche = prochain_cap - cap_precedent
+  pct = int(min(100, max(0, (gain_tranche / total_tranche) * 100)))
+  reste = prochain_cap - adherents
+
+  txt_cap = (
+      f"Cap {prochain_cap // 1000}k  (tranche {cap_precedent // 1000}k ->"
+      f" {prochain_cap // 1000}k)"
+  )
+  fig.text(0.07, 0.68, txt_cap, color="#1E293B", fontsize=13, weight="bold")
+  fig.text(
+      0.07,
+      0.64,
+      f"{pct} % atteint (+{formater_nombre(gain_tranche)} /"
+      f" {formater_nombre(total_tranche)})   —   Reste"
+      f" {formater_nombre(reste)} adhésions",
+      color="#64748B",
+      fontsize=11,
+      weight="medium",
+  )
+
+  # Barre de progression
+  bar_x, bar_y, bar_w, bar_h = 0.07, 0.59, 0.86, 0.03
+  bg_bar = FancyBboxPatch(
+      (bar_x, bar_y),
+      bar_w,
+      bar_h,
+      boxstyle="round,pad=0.003,rounding_size=0.015",
+      facecolor="#E2E8F0",
+      edgecolor="#CBD5E1",
+      linewidth=1.0,
+      transform=fig.transFigure,
+      clip_on=False,
+  )
+  fig.patches.append(bg_bar)
+
+  w_fill = bar_w * (pct / 100.0)
+  if w_fill > 0.01:
+    fill_bar = FancyBboxPatch(
+        (bar_x, bar_y),
+        w_fill,
+        bar_h,
+        boxstyle="round,pad=0.003,rounding_size=0.015",
+        facecolor="#0066FF",
+        edgecolor="#2563EB",
+        linewidth=0.8,
+        transform=fig.transFigure,
+        clip_on=False,
+    )
+    fig.patches.append(fill_bar)
+
+  # 7. Chargement de l'historique complet (Jalons fin août + CSV)
+  points = list(JALONS_HISTORIQUES)
+  if os.path.isfile(CSV_FILE):
+    with open(CSV_FILE, "r", encoding="utf-8") as f:
+      for row in list(csv.reader(f))[1:]:
+        try:
+          points.append((datetime.fromisoformat(row[0]), int(row[1])))
+        except (ValueError, IndexError):
+          continue
+
+  points.sort(key=lambda x: x[0])
+  dates_hist, values_hist = zip(*points)
+
+  # Zone graphique
+  ax_curve = fig.add_axes([0.07, 0.12, 0.86, 0.38], facecolor="#FFFFFF")
+  for spine in ax_curve.spines.values():
+    spine.set_color("#E2E8F0")
+  ax_curve.spines["top"].set_visible(False)
+  ax_curve.spines["right"].set_visible(False)
+
+  # Tracé de la dynamique
+  ax_curve.plot(
+      dates_hist, values_hist, color="#0066FF", linewidth=3.0, zorder=4
+  )
+
+  # Marquage des jalons historiques spécifiques
+  jalons_dt = [j[0] for j in JALONS_HISTORIQUES]
+  jalons_val = [j[1] for j in JALONS_HISTORIQUES]
+  ax_curve.scatter(
+      jalons_dt,
+      jalons_val,
+      color="#002654",
+      s=45,
+      zorder=5,
+      edgecolor="#FFFFFF",
+      linewidth=1.8,
+  )
+
+  # Point actuel en rouge tricolore
+  ax_curve.scatter(
+      [dates_hist[-1]],
+      [values_hist[-1]],
+      color="#ED2939",
+      s=65,
+      zorder=6,
+      edgecolor="#FFFFFF",
+      linewidth=2,
+  )
+
+  # Zone sous la courbe avec minimum adapté à fin août (~24 000)
+  min_val = 24000
+  ax_curve.fill_between(
+      dates_hist, values_hist, min_val, color="#0066FF", alpha=0.08, zorder=3
+  )
+  ax_curve.set_ylim(bottom=min_val, top=max(values_hist) + 1500)
+
+  ax_curve.grid(
+      axis="y", color="#F1F5F9", linestyle="--", linewidth=1.2, zorder=1
+  )
+  ax_curve.tick_params(colors="#64748B", labelsize=10)
+  ax_curve.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+  # 8. Pied de carte
+  fig.text(
+      0.07,
+      0.045,
+      "Source : Données publiques adhérents · unenouvelleenergie.fr",
+      color="#64748B",
+      fontsize=9.5,
+      weight="medium",
+  )
+  fig.text(
+      0.79, 0.045, "@CompteurNE", color="#64748B", fontsize=9.5, weight="bold"
+  )
+
+  plt.savefig(output_path, dpi=120, bbox_inches="tight")
+  plt.close(fig)
 
 
 def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
