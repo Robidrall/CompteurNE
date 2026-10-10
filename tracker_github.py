@@ -52,6 +52,44 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     pct = int(progression * 100)
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
+import scipy.optimize as opt
+
+
+def ajuster_polynome_croissant(x: np.ndarray, y: np.ndarray):
+    """Ajuste f(t) = at² + bt + c sous la contrainte stricte f'(t) >= 0 sur tout l'intervalle."""
+    t_fin = x[-1]
+
+    # Test initial avec moindres carrés ordinaires
+    poly = np.polyfit(x, y, deg=2)
+    a, b, c = poly
+
+    # Si la dérivée est déjà positive partout, on conserve la solution optimale
+    if b >= 0 and (2 * a * t_fin + b) >= 0:
+        return a, b, c
+
+    # Sinon, optimisation sous contraintes : min ||pred - y||²
+    def objectif(p):
+        return np.sum((p[0] * x**2 + p[1] * x + p[2] - y) ** 2)
+
+    # Contraintes : f'(0) >= 0 et f'(t_fin) >= 0
+    contraintes = [
+        {"type": "ineq", "fun": lambda p: p[1]},
+        {"type": "ineq", "fun": lambda p: 2 * p[0] * t_fin + p[1]},
+    ]
+
+    # Estimation initiale basée sur une régression linéaire positive
+    p1 = np.polyfit(x, y, 1)
+    p_init = [0.0, max(0.0, p1[0]), p1[1]]
+
+    res = opt.minimize(
+        objectif, p_init, constraints=contraintes, method="SLSQP"
+    )
+    if res.success:
+        return res.x[0], res.x[1], res.x[2]
+
+    # Solution de repli (régression linéaire à pente positive)
+    return 0.0, max(0.0, p1[0]), p1[1]
+
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     if not os.path.isfile(csv_file):
@@ -220,8 +258,8 @@ def generer_carte_vitesse_12h(output_path: str = CHART_12H_FILE):
 
     # 2. Modélisation UNIQUE (utilisée à la fois pour les formules, le badge KPI et les courbes)
     poly = np.polyfit(x_hours, y_vals, deg=2)
-    a, b, c = poly
-    p = np.poly1d(poly)
+    a, b, c = ajuster_polynome_croissant(x_hours, y_vals)
+    p = np.poly1d([a, b, c])
     p_deriv = p.deriv()  # Dérivée f'(t) = 2at + b en adhérents/heure
 
     # Vitesse calculée au dernier point (t_fin)
