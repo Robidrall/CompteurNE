@@ -50,33 +50,43 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
 
-def calculer_velocite(gain_24h: int, gain_7j: int):
-    """Calcule la cadence moyenne et le momentum vs 7 jours."""
-    moyenne_jour_7j = gain_7j / 7 if gain_7j > 0 else 0
+def calculer_cadence_recente(csv_file: str = CSV_FILE):
+    """Calcule la cadence moyenne entre les deux derniers enregistrements du CSV ramenée à la minute."""
+    if not os.path.isfile(csv_file):
+        return "Données insuffisantes"
 
-    # 1. Cadence (adhésions / heure ou minutes / adhésion)
-    if gain_24h > 0:
-        minutes_par_adhesion = (24 * 60) / gain_24h
-        if minutes_par_adhesion >= 60:
-            cadence_texte = f"~{(gain_24h / 24):.1f} adh. / heure"
-        else:
-            cadence_texte = f"1 adhésion toutes les {int(minutes_par_adhesion)} min"
-    else:
-        cadence_texte = "Rythme temporairement calme"
+    with open(csv_file, "r", encoding="utf-8") as f:
+        lignes = list(csv.reader(f))
 
-    # 2. Momentum (% d'écart vs moyenne hebdo)
-    if moyenne_jour_7j > 0:
-        ecart_pct = ((gain_24h - moyenne_jour_7j) / moyenne_jour_7j) * 100
-        if ecart_pct >= 10:
-            momentum_texte = f"🟢 En accélération (+{int(ecart_pct)} % vs moy. 7j)"
-        elif ecart_pct <= -10:
-            momentum_texte = f"🟠 En décélération ({int(ecart_pct)} % vs moy. 7j)"
-        else:
-            momentum_texte = "⚪ Rythme stable (conforme à la moy. 7j)"
-    else:
-        momentum_texte = "⚪ Données d'accélération en cours de calcul"
+    # Il faut au moins l'en-tête et 2 relevés
+    if len(lignes) < 3:
+        return "Historique en cours de constitution"
 
-    return cadence_texte, momentum_texte, moyenne_jour_7j
+    row_prec = lignes[-2]
+    row_dernier = lignes[-1]
+
+    try:
+        dt_prec = datetime.fromisoformat(row_prec[0])
+        dt_dernier = datetime.fromisoformat(row_dernier[0])
+        adh_prec = int(row_prec[1])
+        adh_dernier = int(row_dernier[1])
+    except (ValueError, IndexError):
+        return "Format invalide"
+
+    delta_minutes = (dt_dernier - dt_prec).total_seconds() / 60
+    delta_adh = adh_dernier - adh_prec
+
+    if delta_minutes <= 0 or delta_adh <= 0:
+        return "Rythme temporairement calme"
+
+    # Si le flux est très rapide (> 1 adh / minute)
+    adh_par_minute = delta_adh / delta_minutes
+    if adh_par_minute >= 1.0:
+        return f"~{adh_par_minute:.1f} adh. / min"
+    
+    # Si le flux est plus espacé (< 1 adh / minute)
+    minutes_par_adh = delta_minutes / delta_adh
+    return f"1 adhésion toutes les {int(round(minutes_par_adh))} min"
 
 
 def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int, 
@@ -309,30 +319,22 @@ def run():
     if doit_notifier:
         cap_precedent = (adherents // PAS_CAP) * PAS_CAP
         prochain_cap = cap_precedent + PAS_CAP
+        gain_depuis_palier = adherents - cap_precedent
         reste_avant_cap = prochain_cap - adherents
+        pct_tranche = int((gain_depuis_palier / PAS_CAP) * 100)
+
         jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
 
-        cadence_txt, momentum_txt, moyenne_jour_7j = calculer_velocite(gain_24h, gain_7j)
-
-        if moyenne_jour_7j > 0:
-            jours_restants = reste_avant_cap / moyenne_jour_7j
-            eta_date = maintenant + timedelta(days=jours_restants)
-            eta_texte = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]} {eta_date.year}"
-        else:
-            eta_texte = "Indéterminée"
-
-        # Tweet moderne, axé vélocité & chiffres clés
         tweet_texte = (
             f"📊 @nouv_energie · Baromètre d'adhésion\n\n"
             f"👥 {formater_nombre(adherents)} adhérents\n"
             f"⚡ Cadence : {cadence_txt}\n"
             f"📈 +{formater_nombre(gain_24h)} en 24h · +{formater_nombre(gain_7j)} sur 7j\n"
             f"{momentum_txt}\n\n"
-            f"Objectif {prochain_cap // 1000}k :\n"
-            f"{jauge_txt}\n"
+            f"Objectif {prochain_cap // 1000}k (tranche {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k) :\n"
+            f"{jauge_txt} (+{formater_nombre(gain_depuis_palier)} / {formater_nombre(PAS_CAP)})\n"
             f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
             f"▫️ Projection : {eta_texte}\n\n"
-            f"#NouvelleEnergie #DavidLisnard"
         )
 
         email_corps = (
