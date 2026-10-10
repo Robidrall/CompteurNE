@@ -200,7 +200,7 @@ def generer_carte_visuelle(adherents: int, gain_24h: int, gain_7j: int,
 
     # 8. Pied de carte
     fig.text(0.07, 0.045, "Source : Données publiques adhérents · unenouvelleenergie.fr", color="#475569", fontsize=9.5, weight="medium")
-    fig.text(0.79, 0.045, "@nouv_energie Tracker", color="#475569", fontsize=9.5, weight="bold")
+    fig.text(0.79, 0.045, "@CompteurNE", color="#475569", fontsize=9.5, weight="bold")
     
     plt.savefig(output_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -378,16 +378,14 @@ def run():
             eta_texte = "Indéterminée"
 
         tweet_texte = (
-            f"📊 @nouv_energie · Baromètre d'adhésion\n\n"
+            f"📊 @CompteurNE · Baromètre\n\n"
             f"👥 {formater_nombre(adherents)} adhérents\n"
-            f"⚡ Cadence : {cadence_txt}\n"
-            f"📈 +{formater_nombre(gain_24h)} en 24h · +{formater_nombre(gain_7j)} sur 7j\n"
+            f"⚡ {cadence_txt}\n"
+            f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n"
             f"{momentum_txt}\n\n"
-            f"Objectif {prochain_cap // 1000}k (tranche {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k) :\n"
-            f"{jauge_txt} (+{formater_nombre(gain_depuis_palier)} / {formater_nombre(PAS_CAP)})\n"
+            f"Cap {prochain_cap // 1000}k ({jauge_txt}) :\n"
             f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
-            f"▫️ Projection : {eta_texte}\n\n"
-            f"#NouvelleEnergie #DavidLisnard"
+            f"▫️ Projection : {eta_texte}"
         )
 
         email_corps = (
