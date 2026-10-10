@@ -22,7 +22,7 @@ from matplotlib.patches import FancyBboxPatch
 PAS_PALIER = 50        # Alerte tous les 50 nouveaux adhérents
 PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
 SEUIL_HEURES = 6       # Notification récurrente max
-TAILLE_BARRE = 10      # Longueur de la jauge textuelle
+TAILLE_BARRE = 8      # Longueur de la jauge textuelle
 
 URL = "https://adherent.unenouvelleenergie.fr/parrainer"
 LIEN_ADHESION = "https://soutenir.unenouvelleenergie.fr/p/SZZQKUQB"
@@ -348,25 +348,65 @@ def sauvegarder_csv(iso_date, adherents, gain_7j):
 
 
 def calculer_gain_24h(maintenant, adherents_actuels):
+    """Calcule le gain sur 24h glissantes par interpolation linéaire
+
+    pour corriger les intervalles de relevé irréguliers (2h, 3h, etc.).
+    """
     if not os.path.isfile(CSV_FILE):
         return 0
-    cible = maintenant - timedelta(hours=24)
-    adherents_24h = None
+
+    points = []
     with open(CSV_FILE, "r", encoding="utf-8") as f:
-        lignes = list(csv.reader(f))
-        if len(lignes) <= 1:
-            return 0
-        for row in reversed(lignes[1:]):
+        for row in list(csv.reader(f))[1:]:
             try:
-                dt = datetime.fromisoformat(row[0])
-                if dt <= cible:
-                    adherents_24h = int(row[1])
-                    break
-            except ValueError:
+                points.append((datetime.fromisoformat(row[0]), int(row[1])))
+            except (ValueError, IndexError):
                 continue
-        if adherents_24h is None:
-            adherents_24h = int(lignes[1][1])
-    return adherents_actuels - adherents_24h
+
+    if not points:
+        return 0
+
+    # Tri par sécurité
+    points.sort(key=lambda x: x[0])
+
+    t_debut = points[0][0]
+    cible = maintenant - timedelta(hours=24)
+
+    # Cas 1 : Moins de 24h d'historique dans le fichier -> prorata sur 24h
+    if cible < t_debut:
+        heures_dispo = (maintenant - t_debut).total_seconds() / 3600
+        if heures_dispo >= 1.0:
+            gain_observe = adherents_actuels - points[0][1]
+            return int(round((gain_observe / heures_dispo) * 24))
+        return 0
+
+    # Cas 2 : Recherche des deux points qui encadrent exactement la cible
+    p_avant = None
+    p_apres = None
+
+    for pt in points:
+        if pt[0] <= cible:
+            p_avant = pt
+        elif pt[0] > cible and p_apres is None:
+            p_apres = pt
+            break
+
+    # Si la cible tombe pile sur un relevé ou au-delà du dernier connu
+    if p_avant and not p_apres:
+        return adherents_actuels - p_avant[1]
+
+    # Interpolation linéaire exacte entre p_avant et p_apres
+    t1, y1 = p_avant
+    t2, y2 = p_apres
+
+    duree_segment = (t2 - t1).total_seconds()
+    if duree_segment <= 0:
+        return adherents_actuels - y1
+
+    ratio = (cible - t1).total_seconds() / duree_segment
+    adh_estimes_cible = y1 + ratio * (y2 - y1)
+
+    return int(round(adherents_actuels - adh_estimes_cible))
 
 
 def lire_etat():
