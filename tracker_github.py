@@ -94,44 +94,34 @@ def calculer_momentum(gain_24h: int, gain_7j: int):
     return "⚪ Données en cours d'acquisition", moyenne_jour
 
 def extraire_donnees():
-    """Utilise les nouvelles API JSON pour récupérer le live et l'historique officiel."""
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        # 1. Total en direct
         resp_live = requests.get(URL_LIVE, headers=headers, timeout=10)
         resp_live.raise_for_status()
         data_live = resp_live.json()
-        
         adherents = data_live.get("adherents")
         mis_a_jour_str = data_live.get("mis_a_jour")
-        
-        # Conversion du format ISO 8601 avec "Z" en objet datetime UTC
+
         try:
             date_maj = datetime.fromisoformat(mis_a_jour_str.replace("Z", "+00:00"))
         except (ValueError, TypeError, AttributeError):
-            # Fallback en cas de problème de format
             date_maj = datetime.now(timezone.utc)
 
-        # 2. Historique quotidien
         resp_histo = requests.get(URL_HISTO, headers=headers, timeout=10)
         resp_histo.raise_for_status()
         jours = resp_histo.json().get("jours", [])
-        
-        gain_24h = 0
+
+        # Gain 7j officiel (comparé au point d'il y a 7 jours arrêtés)
         gain_7j = 0
-        
         if jours:
-            # Gain par rapport à la veille (fin de journée)
-            gain_24h = adherents - jours[-1].get("adherents", adherents)
-            # Gain par rapport à il y a 7 jours
             idx_7j = -7 if len(jours) >= 7 else 0
             gain_7j = adherents - jours[idx_7j].get("adherents", adherents)
 
-        return adherents, gain_24h, gain_7j, date_maj
+        return adherents, gain_7j, date_maj
 
     except requests.exceptions.RequestException as e:
         print(f"Erreur API : {e}")
-        return None, None, None, None
+        return None, None, None
 
 def sauvegarder_csv(iso_date, adherents, gain_7j):
     """Conserve un historique local pour évaluer la cadence immédiate (calcul_cadence_recente)"""
@@ -292,6 +282,56 @@ def generer_carte_visuelle(
 
     plt.savefig(output_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
+
+def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: str = CSV_FILE) -> int:
+    """Calcule le gain réel sur 24h glissantes par interpolation linéaire."""
+    if not os.path.isfile(csv_file):
+        return 0
+
+    points = []
+    with open(csv_file, "r", encoding="utf-8") as f:
+        for row in list(csv.reader(f))[1:]:
+            try:
+                points.append((datetime.fromisoformat(row[0]), int(row[1])))
+            except (ValueError, IndexError):
+                continue
+
+    if not points:
+        return 0
+
+    points.sort(key=lambda x: x[0])
+    t_debut = points[0][0]
+    cible = maintenant - timedelta(hours=24)
+
+    # Moins de 24h d'historique dispo : prorata
+    if cible < t_debut:
+        heures_dispo = (maintenant - t_debut).total_seconds() / 3600
+        if heures_dispo >= 1.0:
+            gain_observe = adherents_actuels - points[0][1]
+            return int(round((gain_observe / heures_dispo) * 24))
+        return 0
+
+    p_avant = None
+    p_apres = None
+    for pt in points:
+        if pt[0] <= cible:
+            p_avant = pt
+        elif pt[0] > cible and p_apres is None:
+            p_apres = pt
+            break
+
+    if p_avant and not p_apres:
+        return adherents_actuels - p_avant[1]
+
+    t1, y1 = p_avant
+    t2, y2 = p_apres
+    duree_segment = (t2 - t1).total_seconds()
+    if duree_segment <= 0:
+        return adherents_actuels - y1
+
+    ratio = (cible - t1).total_seconds() / duree_segment
+    adh_estimes_cible = y1 + ratio * (y2 - y1)
+    return int(round(adherents_actuels - adh_estimes_cible))
 
 def envoyer_email(sujet, contenu, image_path):
     msg = MIMEMultipart()
