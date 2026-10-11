@@ -100,7 +100,17 @@ def extraire_donnees():
         # 1. Total en direct
         resp_live = requests.get(URL_LIVE, headers=headers, timeout=10)
         resp_live.raise_for_status()
-        adherents = resp_live.json().get("adherents")
+        data_live = resp_live.json()
+        
+        adherents = data_live.get("adherents")
+        mis_a_jour_str = data_live.get("mis_a_jour")
+        
+        # Conversion du format ISO 8601 avec "Z" en objet datetime UTC
+        try:
+            date_maj = datetime.fromisoformat(mis_a_jour_str.replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError):
+            # Fallback en cas de problème de format
+            date_maj = datetime.now(timezone.utc)
 
         # 2. Historique quotidien
         resp_histo = requests.get(URL_HISTO, headers=headers, timeout=10)
@@ -117,11 +127,11 @@ def extraire_donnees():
             idx_7j = -7 if len(jours) >= 7 else 0
             gain_7j = adherents - jours[idx_7j].get("adherents", adherents)
 
-        return adherents, gain_24h, gain_7j
+        return adherents, gain_24h, gain_7j, date_maj
 
     except requests.exceptions.RequestException as e:
         print(f"Erreur API : {e}")
-        return None, None, None
+        return None, None, None, None
 
 def sauvegarder_csv(iso_date, adherents, gain_7j):
     """Conserve un historique local pour évaluer la cadence immédiate (calcul_cadence_recente)"""
