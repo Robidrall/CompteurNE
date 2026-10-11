@@ -359,15 +359,20 @@ def run():
         print("Erreur : identifiants SMTP manquants.", flush=True)
         sys.exit(1)
 
-    adherents, gain_24h, gain_7j = extraire_donnees()
+    # 1. Dépaqueter exactement les 3 valeurs renvoyées par extraire_donnees()
+    adherents, gain_7j, date_maj = extraire_donnees()
     if adherents is None:
         print("Impossible d'extraire les données.", flush=True)
         sys.exit(1)
 
-    maintenant = datetime.now(timezone.utc)
+    maintenant = date_maj
     maintenant_iso = maintenant.isoformat()
 
+    # 2. Sauvegarde dans le CSV
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
+
+    # 3. Calculer gain_24h à partir de l'historique CSV
+    gain_24h = calculer_gain_24h(maintenant, adherents)
 
     cadence_txt = calculer_cadence_recente(CSV_FILE)
     momentum_txt, moyenne_jour_7j = calculer_momentum(gain_24h, gain_7j)
