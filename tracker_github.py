@@ -9,12 +9,7 @@ import os
 import smtplib
 import sys
 import requests
-
-import matplotlib
-matplotlib.use("Agg")  # Mode headless
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.patches import FancyBboxPatch
+from playwright.sync_api import sync_playwright
 
 # --- Paramètres généraux ---
 PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
@@ -54,6 +49,9 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     pct = int(progression * 100)
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
+# Heure de Paris (UTC+2 en été, UTC+1 en hiver)
+TZ_FR = timezone(timedelta(hours=2))
+
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
@@ -64,22 +62,38 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
 
     row_prec, row_dernier = lignes[-2], lignes[-1]
     try:
-        dt_prec = datetime.fromisoformat(row_prec[0])
-        dt_dernier = datetime.fromisoformat(row_dernier[0])
+        dt_prec = datetime.fromisoformat(row_prec[0]).astimezone(TZ_FR)
+        dt_dernier = datetime.fromisoformat(row_dernier[0]).astimezone(TZ_FR)
         adh_prec, adh_dernier = int(row_prec[1]), int(row_dernier[1])
     except (ValueError, IndexError):
         return "Format invalide"
 
-    delta_minutes = (dt_dernier - dt_prec).total_seconds() / 60
+    delta_sec = (dt_dernier - dt_prec).total_seconds()
+    delta_heures = delta_sec / 3600
+    delta_minutes = int(round(delta_sec / 60))
     delta_adh = adh_dernier - adh_prec
-    if delta_minutes <= 0 or delta_adh <= 0:
-        return "Rythme temporairement calme"
 
-    adh_par_minute = delta_adh / delta_minutes
-    if adh_par_minute >= 1.0:
-        return f"~{adh_par_minute:.1f} adh. / min"
-    minutes_par_adh = delta_minutes / delta_adh
-    return f"1 adhésion toutes les {int(round(minutes_par_adh))} min"
+    # Heures locales françaises
+    h_debut = dt_prec.strftime("%Hh%M")
+    h_fin = dt_dernier.strftime("%Hh%M")
+
+    duree_txt = f"{delta_minutes} min" if delta_minutes < 60 else f"{int(delta_heures)}h{int(delta_minutes % 60):02d}"
+
+    # Formulation claire de la fenêtre observée
+    contexte = f"de {h_debut} à {h_fin} ({duree_txt})"
+
+    if delta_heures <= 0 or delta_adh <= 0:
+        return f"Rythme calme {contexte}"
+
+    adh_par_heure = delta_adh / delta_heures
+    if adh_par_heure >= 10:
+        val_txt = f"~{int(round(adh_par_heure))} adh. / h"
+    elif adh_par_heure >= 1.0:
+        val_txt = f"~{adh_par_heure:.1f} adh. / h"
+    else:
+        val_txt = f"1 adh. toutes les {delta_heures / delta_adh:.1f} h"
+
+    return f"{val_txt} · {contexte}"
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
@@ -111,7 +125,6 @@ def extraire_donnees():
         resp_histo.raise_for_status()
         jours = resp_histo.json().get("jours", [])
 
-        # Gain 7j officiel (comparé au point d'il y a 7 jours arrêtés)
         gain_7j = 0
         if jours:
             idx_7j = -7 if len(jours) >= 7 else 0
@@ -124,7 +137,6 @@ def extraire_donnees():
         return None, None, None
 
 def sauvegarder_csv(iso_date, adherents, gain_7j):
-    """Conserve un historique local pour évaluer la cadence immédiate (calcul_cadence_recente)"""
     os.makedirs("data", exist_ok=True)
     existe = os.path.isfile(CSV_FILE)
     with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as f:
@@ -159,84 +171,9 @@ def generer_carte_visuelle(
     prochain_cap: int,
     output_path: str,
 ):
-    """Carte 1 : Baromètre global sobre et lumineux aux couleurs de la France."""
+    """Génère la carte visuelle HTML/CSS + Chart.js avec @CompteurNE dans l'en-tête."""
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    fig = plt.figure(figsize=(12, 6.75), dpi=120, facecolor="#F8FAFC")
-
-    # 1. Ruban tricolore supérieur
-    band_height = 0.014
-    ax_banner = fig.add_axes([0, 1 - band_height, 1, band_height])
-    ax_banner.axis("off")
-    ax_banner.axvspan(0, 0.333, color="#002654")
-    ax_banner.axvspan(0.333, 0.666, color="#FFFFFF")
-    ax_banner.axvspan(0.666, 1.0, color="#ED2939")
-
-    # 2. Vignette drapeau tricolore
-    ax_flag = fig.add_axes([0.07, 0.895, 0.024, 0.026])
-    ax_flag.axis("off")
-    ax_flag.axvspan(0, 0.333, color="#002654")
-    ax_flag.axvspan(0.333, 0.666, color="#FFFFFF")
-    ax_flag.axvspan(0.666, 1.0, color="#ED2939")
-    for s in ax_flag.spines.values():
-        s.set_color("#CBD5E1")
-        s.set_linewidth(0.8)
-
-    # 3. En-tête
-    fig.text(0.105, 0.90, "NOUVELLE ÉNERGIE", color="#0F172A", fontsize=15, weight="heavy")
-    fig.text(0.305, 0.90, "·  BAROMÈTRE D'ADHÉSION", color="#64748B", fontsize=14, weight="bold")
-
-    # 4. Bloc principal du total
-    fig.text(0.07, 0.77, formater_nombre(adherents), color="#0F172A", fontsize=52, weight="heavy")
-    fig.text(0.46, 0.785, "adhérents", color="#0284C7", fontsize=22, weight="bold")
-
-    # 5. Bloc KPIs
-    ax_bg = fig.add_axes([0.65, 0.75, 0.28, 0.16], facecolor="#FFFFFF")
-    ax_bg.axis("off")
-    p_bbox = FancyBboxPatch(
-        (0, 0), 1, 1, boxstyle="round,pad=0.04,rounding_size=0.15",
-        facecolor="#FFFFFF", edgecolor="#E2E8F0", linewidth=1.2,
-        transform=ax_bg.transAxes, clip_on=False,
-    )
-    ax_bg.add_patch(p_bbox)
-    ax_bg.text(0.12, 0.65, "DERNIÈRES 24H", color="#64748B", fontsize=9, weight="bold", transform=ax_bg.transAxes)
-    ax_bg.text(0.12, 0.25, f"+{formater_nombre(gain_24h)}", color="#059669", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
-    ax_bg.text(0.58, 0.65, "SUR 7 JOURS", color="#64748B", fontsize=9, weight="bold", transform=ax_bg.transAxes)
-    ax_bg.text(0.58, 0.25, f"+{formater_nombre(gain_7j)}", color="#0284C7", fontsize=18, weight="heavy", transform=ax_bg.transAxes)
-
-    # 6. Progression vers le cap
-    gain_tranche = adherents - cap_precedent
-    total_tranche = prochain_cap - cap_precedent
-    pct = int(min(100, max(0, (gain_tranche / total_tranche) * 100)))
-    reste = prochain_cap - adherents
-
-    txt_cap = f"Cap {prochain_cap // 1000}k  (tranche {cap_precedent // 1000}k -> {prochain_cap // 1000}k)"
-    fig.text(0.07, 0.68, txt_cap, color="#1E293B", fontsize=13, weight="bold")
-    fig.text(
-        0.07, 0.64,
-        f"{pct} % atteint (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)})   —   Reste {formater_nombre(reste)} adhésions",
-        color="#64748B", fontsize=11, weight="medium",
-    )
-
-    # Barre de progression
-    bar_x, bar_y, bar_w, bar_h = 0.07, 0.59, 0.86, 0.03
-    bg_bar = FancyBboxPatch(
-        (bar_x, bar_y), bar_w, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
-        facecolor="#E2E8F0", edgecolor="#CBD5E1", linewidth=1.0,
-        transform=fig.transFigure, clip_on=False,
-    )
-    fig.patches.append(bg_bar)
-
-    w_fill = bar_w * (pct / 100.0)
-    if w_fill > 0.01:
-        fill_bar = FancyBboxPatch(
-            (bar_x, bar_y), w_fill, bar_h, boxstyle="round,pad=0.003,rounding_size=0.015",
-            facecolor="#0066FF", edgecolor="#2563EB", linewidth=0.8,
-            transform=fig.transFigure, clip_on=False,
-        )
-        fig.patches.append(fill_bar)
-
-    # 7. Chargement de l'historique complet
     points = list(JALONS_HISTORIQUES)
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
@@ -247,41 +184,422 @@ def generer_carte_visuelle(
                     continue
 
     points.sort(key=lambda x: x[0])
-    dates_hist, values_hist = zip(*points)
+    
+    unique_points = {}
+    for dt, val in points:
+        unique_points[int(dt.timestamp() * 1000)] = val
 
-    # Zone graphique
-    ax_curve = fig.add_axes([0.07, 0.12, 0.86, 0.38], facecolor="#FFFFFF")
-    for spine in ax_curve.spines.values():
-        spine.set_color("#E2E8F0")
-    ax_curve.spines["top"].set_visible(False)
-    ax_curve.spines["right"].set_visible(False)
+    jalons_ts = {int(j[0].timestamp() * 1000) for j in JALONS_HISTORIQUES}
+    
+    chart_data = []
+    sorted_ts = sorted(unique_points.keys())
+    for i, ts in enumerate(sorted_ts):
+        chart_data.append({
+            "x": ts,
+            "y": unique_points[ts],
+            "isMilestone": ts in jalons_ts,
+            "isLast": (i == len(sorted_ts) - 1)
+        })
 
-    # Tracé de la dynamique
-    ax_curve.plot(dates_hist, values_hist, color="#0066FF", linewidth=3.0, zorder=4)
+    gain_tranche = adherents - cap_precedent
+    total_tranche = prochain_cap - cap_precedent
+    pct = min(100.0, max(0.0, (gain_tranche / total_tranche) * 100))
+    pct_int = int(pct)
+    reste = prochain_cap - adherents
 
-    # Marquage des jalons historiques spécifiques
-    jalons_dt = [j[0] for j in JALONS_HISTORIQUES]
-    jalons_val = [j[1] for j in JALONS_HISTORIQUES]
-    ax_curve.scatter(jalons_dt, jalons_val, color="#002654", s=45, zorder=5, edgecolor="#FFFFFF", linewidth=1.8)
+    html_content = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    width: 1200px;
+    height: 675px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%);
+    color: #0F172A;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+    position: relative;
+  }}
+  .top-banner {{
+    height: 10px;
+    width: 100%;
+    display: flex;
+  }}
+  .top-banner div {{ flex: 1; }}
+  .b-blue {{ background: #002654; }}
+  .b-white {{ background: #FFFFFF; }}
+  .b-red {{ background: #ED2939; }}
 
-    # Point actuel
-    ax_curve.scatter([dates_hist[-1]], [values_hist[-1]], color="#ED2939", s=65, zorder=6, edgecolor="#FFFFFF", linewidth=2)
+  .container {{
+    padding: 34px 56px 26px 56px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }}
 
-    # Zone sous la courbe avec minimum adapté à fin août (~24 000)
-    min_val = 24000
-    ax_curve.fill_between(dates_hist, values_hist, min_val, color="#0066FF", alpha=0.08, zorder=3)
-    ax_curve.set_ylim(bottom=min_val, top=max(values_hist) + 1500)
+  .header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }}
 
-    ax_curve.grid(axis="y", color="#F1F5F9", linestyle="--", linewidth=1.2, zorder=1)
-    ax_curve.tick_params(colors="#64748B", labelsize=10)
-    ax_curve.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+  .brand-title {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }}
 
-    # 8. Pied de carte
-    fig.text(0.07, 0.045, "Source : Données publiques adhérents · unenouvelleenergie.fr", color="#64748B", fontsize=9.5, weight="medium")
-    fig.text(0.79, 0.045, "@CompteurNE", color="#64748B", fontsize=9.5, weight="bold")
+  .flag-icon {{
+    width: 28px;
+    height: 20px;
+    display: flex;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 2px 5px rgba(15, 23, 42, 0.12);
+    border: 1px solid #CBD5E1;
+  }}
+  .flag-icon div {{ flex: 1; }}
 
-    plt.savefig(output_path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
+  .title-main {{
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 0.6px;
+    color: #0F172A;
+  }}
+  .title-sub {{
+    font-size: 17px;
+    font-weight: 700;
+    color: #64748B;
+  }}
+
+  .hero-number {{
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }}
+  .total-val {{
+    font-size: 76px;
+    font-weight: 900;
+    letter-spacing: -2.5px;
+    line-height: 1;
+    background: linear-gradient(95deg, #0F172A 0%, #1E3A8A 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }}
+  .total-unit {{
+    font-size: 30px;
+    font-weight: 800;
+    color: #0284C7;
+  }}
+
+  .right-header {{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+  }}
+
+  .handle-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #0F172A;
+    color: #FFFFFF;
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  }}
+
+  .kpi-group {{
+    display: flex;
+    gap: 14px;
+  }}
+  .kpi-card {{
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+    padding: 14px 22px;
+    min-width: 160px;
+    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05);
+  }}
+  .kpi-label {{
+    font-size: 11px;
+    font-weight: 800;
+    color: #64748B;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }}
+  .kpi-val {{
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: -0.8px;
+  }}
+  .val-24h {{ color: #059669; }}
+  .val-7j {{ color: #0284C7; }}
+
+  .progress-box {{
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+    padding: 16px 24px;
+    box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);
+  }}
+  .progress-top {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }}
+  .cap-title {{
+    font-size: 16px;
+    font-weight: 800;
+    color: #1E293B;
+  }}
+  .cap-title span {{
+    font-weight: 600;
+    color: #64748B;
+    font-size: 14px;
+    margin-left: 6px;
+  }}
+  .cap-stats {{
+    font-size: 14px;
+    font-weight: 600;
+    color: #475569;
+  }}
+  .cap-stats strong {{
+    color: #0055FF;
+    font-weight: 800;
+  }}
+  .bar-bg {{
+    width: 100%;
+    height: 14px;
+    background: #E2E8F0;
+    border-radius: 999px;
+    overflow: hidden;
+    padding: 2px;
+  }}
+  .bar-fill {{
+    height: 100%;
+    width: {pct:.2f}%;
+    background: linear-gradient(90deg, #003896 0%, #0066FF 55%, #38BDF8 100%);
+    border-radius: 999px;
+    box-shadow: 0 0 12px rgba(0, 102, 255, 0.45);
+  }}
+
+  .chart-card {{
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 20px;
+    padding: 20px 24px 14px 20px;
+    height: 315px;
+    box-shadow: 0 12px 30px -8px rgba(15, 23, 42, 0.06);
+    position: relative;
+  }}
+
+  .footer {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: #64748B;
+    font-weight: 600;
+    padding-top: 2px;
+  }}
+</style>
+</head>
+<body>
+  <div class="top-banner">
+    <div class="b-blue"></div>
+    <div class="b-white"></div>
+    <div class="b-red"></div>
+  </div>
+
+  <div class="container">
+    <div class="header">
+      <div>
+        <div class="brand-title">
+          <div class="flag-icon">
+            <div class="b-blue"></div>
+            <div class="b-white"></div>
+            <div class="b-red"></div>
+          </div>
+          <span class="title-main">BAROMÈTRE D'ADHÉSION</span>
+        </div>
+        <div class="hero-number">
+          <span class="total-val">{formater_nombre(adherents)}</span>
+          <span class="total-unit">adhérents</span>
+        </div>
+      </div>
+
+      <div class="right-header">
+        <div class="handle-badge">@CompteurNE</div>
+        <div class="kpi-group">
+          <div class="kpi-card">
+            <div class="kpi-label">Dernières 24h</div>
+            <div class="kpi-val val-24h">+{formater_nombre(gain_24h)}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Sur 7 jours</div>
+            <div class="kpi-val val-7j">+{formater_nombre(gain_7j)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="progress-box">
+      <div class="progress-top">
+        <div class="cap-title">
+          Cap {prochain_cap // 1000}k <span>(tranche {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k)</span>
+        </div>
+        <div class="cap-stats">
+          <strong>{pct_int} % atteint</strong> (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)}) &nbsp;·&nbsp; Reste <strong>{formater_nombre(reste)}</strong> adhésions
+        </div>
+      </div>
+      <div class="bar-bg">
+        <div class="bar-fill"></div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <canvas id="adhChart"></canvas>
+    </div>
+
+    <div class="footer">
+      <div>Données · Source : unenouvelleenergie.fr</div>
+      <div>Actualisé automatiquement</div>
+    </div>
+  </div>
+
+  <script>
+    const rawData = {json.dumps(chart_data)};
+    const ctx = document.getElementById('adhChart').getContext('2d');
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 275);
+    gradient.addColorStop(0, 'rgba(0, 102, 255, 0.26)');
+    gradient.addColorStop(0.75, 'rgba(0, 102, 255, 0.04)');
+    gradient.addColorStop(1, 'rgba(0, 102, 255, 0.0)');
+
+    new Chart(ctx, {{
+      type: 'line',
+      data: {{
+        datasets: [{{
+          data: rawData,
+          borderColor: '#0055FF',
+          borderWidth: 4,
+          backgroundColor: gradient,
+          fill: true,
+          tension: 0.35,
+          cubicInterpolationMode: 'monotone',
+          pointRadius: (ctx) => {{
+            const pt = ctx.raw;
+            if (!pt) return 0;
+            if (pt.isLast) return 8;
+            if (pt.isMilestone) return 5.5;
+            return 0;
+          }},
+          pointBackgroundColor: (ctx) => {{
+            const pt = ctx.raw;
+            if (!pt) return '#0055FF';
+            if (pt.isLast) return '#ED2939';
+            if (pt.isMilestone) return '#002654';
+            return '#0055FF';
+          }},
+          pointBorderColor: '#FFFFFF',
+          pointBorderWidth: (ctx) => {{
+            const pt = ctx.raw;
+            return (pt && (pt.isLast || pt.isMilestone)) ? 2.5 : 0;
+          }}
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        layout: {{
+          padding: {{ top: 10, right: 16, bottom: 2, left: 4 }}
+        }},
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{ enabled: false }}
+        }},
+        scales: {{
+          x: {{
+            type: 'time',
+            time: {{
+              unit: 'day',
+              displayFormats: {{ day: 'dd MMM' }}
+            }},
+            grid: {{ display: false }},
+            border: {{ color: '#E2E8F0' }},
+            ticks: {{
+              color: '#64748B',
+              font: {{ family: 'Inter', size: 12, weight: '600' }},
+              maxTicksLimit: 9,
+              callback: function(value) {{
+                const d = new Date(value);
+                return d.toLocaleDateString('fr-FR', {{ day: '2-digit', month: 'short' }});
+              }}
+            }}
+          }},
+          y: {{
+            min: 24000,
+            suggestedMax: {max(unique_points.values()) + 1200},
+            border: {{ display: false, dash: [5, 5] }},
+            grid: {{
+              color: '#F1F5F9',
+              lineWidth: 1.5
+            }},
+            ticks: {{
+              color: '#64748B',
+              font: {{ family: 'Inter', size: 12, weight: '600' }},
+              callback: function(value) {{
+                return value.toString().replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, " ");
+              }}
+            }}
+          }}
+        }}
+      }}
+    }});
+  </script>
+</body>
+</html>"""
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(
+            viewport={"width": 1200, "height": 675},
+            device_scale_factor=2
+        )
+        page.set_content(html_content, wait_until="networkidle")
+        page.screenshot(path=output_path)
+        browser.close()
+
+    # 4. Capture HD via Playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(
+            viewport={"width": 1200, "height": 675},
+            device_scale_factor=2  # Qualité Retina (2400x1350 px)
+        )
+        page.set_content(html_content, wait_until="networkidle")
+        page.screenshot(path=output_path)
+        browser.close()
 
 def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: str = CSV_FILE) -> int:
     """Calcule le gain réel sur 24h glissantes par interpolation linéaire."""
@@ -303,7 +621,6 @@ def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: st
     t_debut = points[0][0]
     cible = maintenant - timedelta(hours=24)
 
-    # Moins de 24h d'historique dispo : prorata
     if cible < t_debut:
         heures_dispo = (maintenant - t_debut).total_seconds() / 3600
         if heures_dispo >= 1.0:
@@ -359,7 +676,6 @@ def run():
         print("Erreur : identifiants SMTP manquants.", flush=True)
         sys.exit(1)
 
-    # 1. Dépaqueter exactement les 3 valeurs renvoyées par extraire_donnees()
     adherents, gain_7j, date_maj = extraire_donnees()
     if adherents is None:
         print("Impossible d'extraire les données.", flush=True)
@@ -368,10 +684,7 @@ def run():
     maintenant = date_maj
     maintenant_iso = maintenant.isoformat()
 
-    # 2. Sauvegarde dans le CSV
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
-
-    # 3. Calculer gain_24h à partir de l'historique CSV
     gain_24h = calculer_gain_24h(maintenant, adherents)
 
     cadence_txt = calculer_cadence_recente(CSV_FILE)
