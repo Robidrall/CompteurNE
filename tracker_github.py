@@ -32,7 +32,12 @@ DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
 MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", 
            "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
+# Jalons sur l'ensemble de l'année 2026 pour illustrer l'accélération fulgurante récente
 JALONS_HISTORIQUES = [
+    (datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc), 16500),
+    (datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc), 18200),
+    (datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc), 20400),
+    (datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc), 23100),
     (datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc), 26500),
     (datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc), 29500),
     (datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc), 34651),
@@ -137,15 +142,29 @@ def extraire_donnees():
         jours = resp_histo.json().get("jours", [])
 
         gain_7j = 0
+        points_api = []
         if jours:
             idx_7j = -7 if len(jours) >= 7 else 0
             gain_7j = adherents - jours[idx_7j].get("adherents", adherents)
+            # Récupération de tous les points historiques fournis par l'API officielle
+            for j in jours:
+                d_str = j.get("date") or j.get("jour") or j.get("timestamp")
+                val = j.get("adherents")
+                if d_str and val is not None:
+                    try:
+                        if "T" in str(d_str):
+                            dt_j = datetime.fromisoformat(str(d_str).replace("Z", "+00:00"))
+                        else:
+                            dt_j = datetime.fromisoformat(f"{d_str}T12:00:00+00:00")
+                        points_api.append((dt_j, int(val)))
+                    except ValueError:
+                        continue
 
-        return adherents, gain_7j, date_maj
+        return adherents, gain_7j, date_maj, points_api
 
     except requests.exceptions.RequestException as e:
         print(f"Erreur API : {e}")
-        return None, None, None
+        return None, None, None, []
 
 def sauvegarder_csv(iso_date, adherents, gain_7j):
     os.makedirs("data", exist_ok=True)
@@ -184,15 +203,17 @@ def generer_carte_visuelle(
     prochain_cap: int,
     eta_court: str,
     maintenant: datetime,
+    points_api: list,
     output_path: str,
 ):
     """
-    Génère la carte visuelle avec la disposition exacte du modèle 
-    tout en conservant le thème clair/lumineux du code.
+    Génère la carte visuelle sur l'année entière avec mois en filigrane,
+    séparations verticales et axes grand format.
     """
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    points = list(JALONS_HISTORIQUES)
+    # Fusion des jalons annuels + historique API + CSV local
+    points = list(JALONS_HISTORIQUES) + list(points_api)
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
             for row in list(csv.reader(f))[1:]:
@@ -225,6 +246,8 @@ def generer_carte_visuelle(
     dt_fr = maintenant.astimezone(TZ_FR)
     date_header = f"{dt_fr.day} {MOIS_FR[dt_fr.month].upper()} {dt_fr.year}"
 
+    min_y_val = min(unique_points.values()) if unique_points else 15000
+    min_y_axis = max(0, ((min_y_val - 2000) // 5000) * 5000)
     max_y = max(unique_points.values()) if unique_points else adherents
     suggested_max_y = ((max_y // 5000) + 1) * 5000
 
@@ -251,18 +274,6 @@ def generer_carte_visuelle(
     overflow: hidden;
     position: relative;
   }}
-  /* Grille de fond subtile dans les tons clairs du thème */
-  body::before {{
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image: 
-      linear-gradient(to right, rgba(203, 213, 225, 0.28) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(203, 213, 225, 0.28) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    z-index: 0;
-  }}
 
   .top-banner {{
     height: 8px;
@@ -277,7 +288,7 @@ def generer_carte_visuelle(
   .b-red {{ background: #ED2939; }}
 
   .container {{
-    padding: 28px 56px 22px 56px;
+    padding: 24px 52px 20px 52px;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -286,14 +297,13 @@ def generer_carte_visuelle(
     z-index: 1;
   }}
 
-  /* En-tête : Date à gauche, Pilule Baromètre à droite (sans logo) */
   .top-row {{
     display: flex;
     justify-content: space-between;
     align-items: center;
   }}
   .eyebrow {{
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 800;
     letter-spacing: 2px;
     color: #0284C7;
@@ -303,7 +313,7 @@ def generer_carte_visuelle(
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.95);
     border: 1px solid #CBD5E1;
     padding: 8px 18px;
     border-radius: 999px;
@@ -321,39 +331,36 @@ def generer_carte_visuelle(
     box-shadow: 0 0 0 4px rgba(237, 41, 57, 0.2);
   }}
 
-  /* Gros chiffre central */
   .hero-block {{
-    margin-top: -6px;
+    margin-top: -8px;
   }}
   .total-val {{
-    font-size: 86px;
+    font-size: 84px;
     font-weight: 900;
     letter-spacing: -3px;
-    line-height: 0.98;
+    line-height: 0.96;
     background: linear-gradient(95deg, #0F172A 0%, #1E3A8A 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }}
   .total-sub {{
-    font-size: 24px;
+    font-size: 23px;
     font-weight: 700;
     color: #334155;
-    margin-top: 4px;
+    margin-top: 3px;
   }}
 
-  /* 3 Cartes KPI alignées */
   .kpi-row {{
     display: flex;
     gap: 16px;
-    margin-top: 4px;
   }}
   .kpi-card {{
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #E2E8F0;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #CBD5E1;
     border-radius: 16px;
-    padding: 14px 24px;
-    width: 225px;
-    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05);
+    padding: 12px 24px;
+    width: 230px;
+    box-shadow: 0 8px 20px -5px rgba(15, 23, 42, 0.05);
   }}
   .kpi-val {{
     font-size: 30px;
@@ -365,63 +372,66 @@ def generer_carte_visuelle(
   .val-7j {{ color: #0284C7; }}
   .val-rate {{ color: #0F172A; }}
   .kpi-label {{
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 800;
     color: #64748B;
     letter-spacing: 0.9px;
     text-transform: uppercase;
-    margin-top: 5px;
+    margin-top: 4px;
   }}
 
-  /* Zone Graphique épurée avec bulle callout */
+  /* Zone Graphique avec cadre subtil pour faire ressortir les bandes de mois */
   .chart-wrapper {{
     position: relative;
-    height: 215px;
+    height: 235px;
     width: 100%;
-    margin-top: 2px;
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid #CBD5E1;
+    border-radius: 18px;
+    padding: 8px 12px 4px 12px;
+    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.04);
   }}
   .callout-box {{
     position: absolute;
-    right: 195px;
-    top: 32px;
+    right: 175px;
+    top: 22px;
     background: #FFFFFF;
-    border: 1.5px solid #CBD5E1;
+    border: 2px solid #0055FF;
     border-radius: 12px;
-    padding: 9px 16px;
-    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1);
+    padding: 8px 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 85, 255, 0.18);
     z-index: 5;
   }}
   .callout-box::after {{
     content: "";
     position: absolute;
-    bottom: -7px;
+    bottom: -8px;
     right: 18px;
     width: 12px;
     height: 12px;
     background: #FFFFFF;
-    border-right: 1.5px solid #CBD5E1;
-    border-bottom: 1.5px solid #CBD5E1;
+    border-right: 2px solid #0055FF;
+    border-bottom: 2px solid #0055FF;
     transform: rotate(45deg);
   }}
   .callout-title {{
-    font-size: 10px;
+    font-size: 10.5px;
     font-weight: 800;
     letter-spacing: 0.8px;
-    color: #64748B;
+    color: #0284C7;
     text-transform: uppercase;
   }}
   .callout-val {{
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 900;
     color: #0F172A;
     margin-top: 1px;
   }}
 
-  /* Section Progression en bas */
   .progress-section {{
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 6px;
   }}
   .progress-header {{
     display: flex;
@@ -429,13 +439,13 @@ def generer_carte_visuelle(
     align-items: baseline;
   }}
   .cap-title {{
-    font-size: 17px;
+    font-size: 18px;
     font-weight: 900;
     color: #0F172A;
   }}
   .cap-title span {{
-    font-weight: 600;
-    color: #64748B;
+    font-weight: 700;
+    color: #475569;
     margin-left: 6px;
   }}
   .cap-pct {{
@@ -458,29 +468,29 @@ def generer_carte_visuelle(
     box-shadow: 0 0 12px rgba(0, 102, 255, 0.4);
   }}
   .progress-sub {{
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 600;
-    color: #64748B;
+    color: #475569;
   }}
   .progress-sub strong {{
     color: #0F172A;
     font-weight: 800;
   }}
 
-  /* Pied de page */
   .footer {{
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 13px;
-    color: #64748B;
+    font-size: 13.5px;
+    color: #475569;
     font-weight: 600;
-    border-top: 1px solid rgba(203, 213, 225, 0.6);
-    padding-top: 10px;
+    border-top: 1px solid rgba(203, 213, 225, 0.7);
+    padding-top: 8px;
   }}
   .footer-handle {{
     font-weight: 800;
     color: #0F172A;
+    font-size: 14.5px;
   }}
 </style>
 </head>
@@ -542,7 +552,7 @@ def generer_carte_visuelle(
     </div>
 
     <div class="footer">
-      <div>Données : unenouvelleenergie.fr</div>
+      <div>Données : unenouvelleenergie.fr · Évolution annuelle 2026</div>
       <div class="footer-handle">@CompteurNE</div>
     </div>
   </div>
@@ -551,12 +561,76 @@ def generer_carte_visuelle(
     const rawData = {json.dumps(chart_data)};
     const ctx = document.getElementById('adhChart').getContext('2d');
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, 'rgba(0, 102, 255, 0.25)');
-    gradient.addColorStop(0.75, 'rgba(0, 102, 255, 0.04)');
-    gradient.addColorStop(1, 'rgba(0, 102, 255, 0.0)');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 210);
+    gradient.addColorStop(0, 'rgba(0, 85, 255, 0.30)');
+    gradient.addColorStop(0.75, 'rgba(0, 85, 255, 0.05)');
+    gradient.addColorStop(1, 'rgba(0, 85, 255, 0.0)');
 
-    // Plugin pour dessiner le double halo autour du point actuel (comme sur l'image)
+    // Plugin : Bandes de mois alternées, séparations verticales et nom des mois en filigrane
+    const monthBandsPlugin = {{
+      id: 'monthBandsPlugin',
+      beforeDatasetsDraw(chart) {{
+        const {{ ctx, chartArea: {{ top, bottom, left, right }}, scales: {{ x }} }} = chart;
+        if (!x) return;
+
+        const monthsShort = ['JANV.', 'FÉVR.', 'MARS', 'AVR.', 'MAI', 'JUIN', 'JUIL.', 'AOÛT', 'SEPT.', 'OCT.', 'NOV.', 'DÉC.'];
+        const minTs = x.min;
+        const maxTs = x.max;
+
+        let curr = new Date(minTs);
+        curr.setUTCDate(1);
+        curr.setUTCHours(0, 0, 0, 0);
+
+        ctx.save();
+        let idx = 0;
+
+        while (curr.getTime() <= maxTs) {{
+          const mStart = curr.getTime();
+          const nextMonth = new Date(Date.UTC(curr.getUTCFullYear(), curr.getUTCMonth() + 1, 1));
+          const mEnd = nextMonth.getTime();
+
+          const xStart = Math.max(left, x.getPixelForValue(mStart));
+          const xEnd = Math.min(right, x.getPixelForValue(mEnd));
+          const width = xEnd - xStart;
+
+          if (width > 0) {{
+            // Couleur de fond alternée par mois
+            ctx.fillStyle = (idx % 2 === 0)
+              ? 'rgba(226, 232, 240, 0.38)'
+              : 'rgba(239, 246, 255, 0.65)';
+            ctx.fillRect(xStart, top, width, bottom - top);
+
+            // Ligne de séparation verticale au 1er du mois
+            if (xStart > left + 4) {{
+              ctx.beginPath();
+              ctx.setLineDash([4, 4]);
+              ctx.moveTo(xStart, top);
+              ctx.lineTo(xStart, bottom);
+              ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
+              ctx.lineWidth = 1.2;
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }}
+
+            // Nom du mois en filigrane + repère en bas de colonne
+            if (width > 34) {{
+              const label = monthsShort[curr.getUTCMonth()];
+              ctx.font = '900 18px Inter, sans-serif';
+              ctx.fillStyle = 'rgba(100, 116, 139, 0.22)';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(label, xStart + width / 2, bottom - 8);
+            }}
+          }}
+
+          curr = nextMonth;
+          idx++;
+        }}
+        ctx.restore();
+      }}
+    }};
+
+    // Plugin : Double halo lumineux sur le point actuel
     const haloPlugin = {{
       id: 'haloPlugin',
       afterDatasetsDraw(chart) {{
@@ -566,17 +640,15 @@ def generer_carte_visuelle(
         const ctx = chart.ctx;
         ctx.save();
         
-        // Cercle extérieur fin
         ctx.beginPath();
         ctx.arc(lastPoint.x, lastPoint.y, 18, 0, 2 * Math.PI);
-        ctx.strokeStyle = 'rgba(237, 41, 57, 0.35)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(237, 41, 57, 0.40)';
+        ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Halo doux intermédiaire
         ctx.beginPath();
         ctx.arc(lastPoint.x, lastPoint.y, 12, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(237, 41, 57, 0.15)';
+        ctx.fillStyle = 'rgba(237, 41, 57, 0.18)';
         ctx.fill();
 
         ctx.restore();
@@ -589,30 +661,30 @@ def generer_carte_visuelle(
         datasets: [{{
           data: rawData,
           borderColor: '#0055FF',
-          borderWidth: 4,
+          borderWidth: 4.5,
           backgroundColor: gradient,
           fill: true,
-          tension: 0.35,
+          tension: 0.28,
           cubicInterpolationMode: 'monotone',
           pointRadius: (ctx) => {{
             const pt = ctx.raw;
-            return (pt && pt.isLast) ? 6.5 : 0;
+            return (pt && pt.isLast) ? 7 : 0;
           }},
           pointBackgroundColor: '#ED2939',
           pointBorderColor: '#FFFFFF',
           pointBorderWidth: (ctx) => {{
             const pt = ctx.raw;
-            return (pt && pt.isLast) ? 2.5 : 0;
+            return (pt && pt.isLast) ? 3 : 0;
           }}
         }}]
       }},
-      plugins: [haloPlugin],
+      plugins: [monthBandsPlugin, haloPlugin],
       options: {{
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
         layout: {{
-          padding: {{ top: 20, right: 18, bottom: 0, left: 6 }}
+          padding: {{ top: 16, right: 10, bottom: 2, left: 6 }}
         }},
         plugins: {{
           legend: {{ display: false }},
@@ -622,33 +694,34 @@ def generer_carte_visuelle(
           x: {{
             type: 'time',
             time: {{
-              unit: 'day',
-              displayFormats: {{ day: 'd MMM' }}
+              unit: 'month'
             }},
             grid: {{ display: false }},
-            border: {{ color: '#CBD5E1' }},
+            border: {{ color: '#94A3B8', width: 1.5 }},
             ticks: {{
-              color: '#64748B',
-              font: {{ family: 'Inter', size: 12, weight: '600' }},
-              maxTicksLimit: 5,
+              color: '#1E293B',
+              font: {{ family: 'Inter', size: 15, weight: '800' }},
+              maxRotation: 0,
+              autoSkip: false,
               callback: function(value) {{
                 const d = new Date(value);
-                return d.toLocaleDateString('fr-FR', {{ day: 'numeric', month: 'short' }});
+                return d.toLocaleDateString('fr-FR', {{ month: 'short' }}).toUpperCase();
               }}
             }}
           }},
           y: {{
             position: 'right',
-            min: 24000,
+            min: {min_y_axis},
             suggestedMax: {suggested_max_y},
             border: {{ display: false }},
             grid: {{
-              color: 'rgba(203, 213, 225, 0.45)',
-              lineWidth: 1
+              color: 'rgba(148, 163, 184, 0.35)',
+              lineWidth: 1.2
             }},
             ticks: {{
-              color: '#64748B',
-              font: {{ family: 'Inter', size: 11.5, weight: '600' }},
+              color: '#1E293B',
+              font: {{ family: 'Inter', size: 15.5, weight: '800' }},
+              padding: 8,
               stepSize: 10000,
               callback: function(value) {{
                 return (value / 1000) + 'k';
@@ -662,7 +735,6 @@ def generer_carte_visuelle(
 </body>
 </html>"""
 
-    # Capture HD via Playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(
@@ -748,7 +820,7 @@ def run():
         print("Erreur : identifiants SMTP manquants.", flush=True)
         sys.exit(1)
 
-    adherents, gain_7j, date_maj = extraire_donnees()
+    adherents, gain_7j, date_maj, points_api = extraire_donnees()
     if adherents is None:
         print("Impossible d'extraire les données.", flush=True)
         sys.exit(1)
@@ -830,6 +902,7 @@ def run():
             prochain_cap=prochain_cap,
             eta_court=eta_court,
             maintenant=maintenant,
+            points_api=points_api,
             output_path=CHART_FILE,
         )
 
