@@ -50,7 +50,10 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
-    """Calcule la cadence récente exprimée en adhérents par heure."""
+    """
+    Calcule le rythme horaire entre les deux derniers relevés 
+    en précisant la fenêtre horaire observée.
+    """
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
     with open(csv_file, "r", encoding="utf-8") as f:
@@ -66,19 +69,38 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     except (ValueError, IndexError):
         return "Format invalide"
 
-    delta_heures = (dt_dernier - dt_prec).total_seconds() / 3600
+    delta_sec = (dt_dernier - dt_prec).total_seconds()
+    delta_heures = delta_sec / 3600
+    delta_minutes = int(round(delta_sec / 60))
     delta_adh = adh_dernier - adh_prec
+
+    # Conversion en heure de Paris pour le contexte
+    tz_fr = ZoneInfo("Europe/Paris")
+    h_prec = dt_prec.astimezone(tz_fr).strftime("%Hh%M")
+
+    # Formulation de la durée
+    if delta_minutes < 60:
+        duree_txt = f"{delta_minutes} min"
+    else:
+        h = int(delta_heures)
+        m = int(round((delta_heures - h) * 60))
+        duree_txt = f"{h}h{m:02d}" if m > 0 else f"{h}h"
+
+    contexte_temps = f"sur {duree_txt} (depuis {h_prec})"
+
     if delta_heures <= 0 or delta_adh <= 0:
-        return "Rythme temporairement calme"
+        return f"Rythme calme {contexte_temps}"
 
     adh_par_heure = delta_adh / delta_heures
     if adh_par_heure >= 10:
-        return f"~{int(round(adh_par_heure))} adh. / heure"
+        val_txt = f"~{int(round(adh_par_heure))} adh. / h"
     elif adh_par_heure >= 1.0:
-        return f"~{adh_par_heure:.1f} adh. / heure"
+        val_txt = f"~{adh_par_heure:.1f} adh. / h"
     else:
         heures_par_adh = delta_heures / delta_adh
-        return f"1 adhésion toutes les {heures_par_adh:.1f} h"
+        val_txt = f"1 adh. toutes les {heures_par_adh:.1f} h"
+
+    return f"{val_txt} · {contexte_temps}"
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
