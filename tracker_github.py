@@ -207,8 +207,8 @@ def generer_carte_visuelle(
     output_path: str,
 ):
     """
-    Génère la carte visuelle sur l'année entière avec mois en filigrane,
-    séparations verticales et axes grand format.
+    Génère la carte visuelle au format Portrait Mobile 4:5 (1080x1350)
+    avec mois en filigrane, séparations verticales et polices grand format.
     """
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
@@ -263,10 +263,10 @@ def generer_carte_visuelle(
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
-    width: 1200px;
-    height: 675px;
+    width: 1080px;
+    height: 1350px;
     font-family: 'Inter', -apple-system, sans-serif;
-    background: linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%);
+    background: linear-gradient(155deg, #F8FAFC 0%, #EFF6FF 100%);
     color: #0F172A;
     display: flex;
     flex-direction: column;
@@ -275,8 +275,21 @@ def generer_carte_visuelle(
     position: relative;
   }}
 
+  /* Grille de fond subtile */
+  body::before {{
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: 
+      linear-gradient(to right, rgba(203, 213, 225, 0.28) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(203, 213, 225, 0.28) 1px, transparent 1px);
+    background-size: 54px 54px;
+    pointer-events: none;
+    z-index: 0;
+  }}
+
   .top-banner {{
-    height: 8px;
+    height: 14px;
     width: 100%;
     display: flex;
     position: relative;
@@ -288,7 +301,7 @@ def generer_carte_visuelle(
   .b-red {{ background: #ED2939; }}
 
   .container {{
-    padding: 24px 52px 20px 52px;
+    padding: 46px 56px 40px 56px;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -297,141 +310,151 @@ def generer_carte_visuelle(
     z-index: 1;
   }}
 
+  /* En-tête */
   .top-row {{
     display: flex;
     justify-content: space-between;
     align-items: center;
   }}
   .eyebrow {{
-    font-size: 15px;
+    font-size: 20px;
     font-weight: 800;
-    letter-spacing: 2px;
+    letter-spacing: 2.5px;
     color: #0284C7;
     text-transform: uppercase;
   }}
   .pill-badge {{
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     background: rgba(255, 255, 255, 0.95);
-    border: 1px solid #CBD5E1;
-    padding: 8px 18px;
+    border: 1.5px solid #CBD5E1;
+    padding: 12px 24px;
     border-radius: 999px;
-    font-size: 13px;
+    font-size: 17px;
     font-weight: 800;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
     color: #0F172A;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
   }}
   .pill-dot {{
-    width: 10px;
-    height: 10px;
+    width: 13px;
+    height: 13px;
     background: #ED2939;
     border-radius: 50%;
-    box-shadow: 0 0 0 4px rgba(237, 41, 57, 0.2);
+    box-shadow: 0 0 0 5px rgba(237, 41, 57, 0.22);
   }}
 
+  /* Chiffre principal géant pour mobile */
   .hero-block {{
-    margin-top: -8px;
+    margin-top: 6px;
   }}
   .total-val {{
-    font-size: 84px;
+    font-size: 134px;
     font-weight: 900;
-    letter-spacing: -3px;
-    line-height: 0.96;
+    letter-spacing: -4.5px;
+    line-height: 0.95;
     background: linear-gradient(95deg, #0F172A 0%, #1E3A8A 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }}
   .total-sub {{
-    font-size: 23px;
+    font-size: 34px;
     font-weight: 700;
     color: #334155;
-    margin-top: 3px;
+    margin-top: 10px;
   }}
 
+  /* 3 Cartes KPI pleine largeur */
   .kpi-row {{
-    display: flex;
-    gap: 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 8px;
   }}
   .kpi-card {{
     background: rgba(255, 255, 255, 0.95);
-    border: 1px solid #CBD5E1;
-    border-radius: 16px;
-    padding: 12px 24px;
-    width: 230px;
-    box-shadow: 0 8px 20px -5px rgba(15, 23, 42, 0.05);
+    border: 1.5px solid #CBD5E1;
+    border-radius: 22px;
+    padding: 24px 26px;
+    box-shadow: 0 12px 28px -6px rgba(15, 23, 42, 0.06);
   }}
   .kpi-val {{
-    font-size: 30px;
+    font-size: 44px;
     font-weight: 900;
-    letter-spacing: -0.8px;
-    line-height: 1.1;
+    letter-spacing: -1.2px;
+    line-height: 1.05;
   }}
   .val-24h {{ color: #059669; }}
   .val-7j {{ color: #0284C7; }}
   .val-rate {{ color: #0F172A; }}
   .kpi-label {{
-    font-size: 11.5px;
+    font-size: 15px;
     font-weight: 800;
     color: #64748B;
-    letter-spacing: 0.9px;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    margin-top: 4px;
+    margin-top: 10px;
   }}
 
-  /* Zone Graphique avec cadre subtil pour faire ressortir les bandes de mois */
+  /* Zone Graphique haute pour mobile */
   .chart-wrapper {{
     position: relative;
-    height: 235px;
+    height: 470px;
     width: 100%;
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid #CBD5E1;
-    border-radius: 18px;
-    padding: 8px 12px 4px 12px;
-    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.04);
+    background: rgba(255, 255, 255, 0.85);
+    border: 1.5px solid #CBD5E1;
+    border-radius: 24px;
+    padding: 18px 16px 10px 16px;
+    box-shadow: 0 14px 34px -8px rgba(15, 23, 42, 0.06);
   }}
   .callout-box {{
     position: absolute;
-    right: 175px;
-    top: 22px;
+    right: 170px;
+    top: 42px;
     background: #FFFFFF;
-    border: 2px solid #0055FF;
-    border-radius: 12px;
-    padding: 8px 16px;
-    box-shadow: 0 10px 25px -5px rgba(0, 85, 255, 0.18);
+    border: 2.5px solid #0055FF;
+    border-radius: 16px;
+    padding: 14px 22px;
+    box-shadow: 0 12px 30px -5px rgba(0, 85, 255, 0.20);
     z-index: 5;
   }}
   .callout-box::after {{
     content: "";
     position: absolute;
-    bottom: -8px;
-    right: 18px;
-    width: 12px;
-    height: 12px;
+    bottom: -10px;
+    right: 24px;
+    width: 16px;
+    height: 16px;
     background: #FFFFFF;
-    border-right: 2px solid #0055FF;
-    border-bottom: 2px solid #0055FF;
+    border-right: 2.5px solid #0055FF;
+    border-bottom: 2.5px solid #0055FF;
     transform: rotate(45deg);
   }}
   .callout-title {{
-    font-size: 10.5px;
+    font-size: 14px;
     font-weight: 800;
-    letter-spacing: 0.8px;
+    letter-spacing: 1px;
     color: #0284C7;
     text-transform: uppercase;
   }}
   .callout-val {{
-    font-size: 16px;
+    font-size: 24px;
     font-weight: 900;
     color: #0F172A;
-    margin-top: 1px;
+    margin-top: 3px;
   }}
 
+  /* Section Progression en bas */
   .progress-section {{
+    background: rgba(255, 255, 255, 0.9);
+    border: 1.5px solid #CBD5E1;
+    border-radius: 22px;
+    padding: 22px 30px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 12px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
   }}
   .progress-header {{
     display: flex;
@@ -439,36 +462,37 @@ def generer_carte_visuelle(
     align-items: baseline;
   }}
   .cap-title {{
-    font-size: 18px;
+    font-size: 26px;
     font-weight: 900;
     color: #0F172A;
   }}
   .cap-title span {{
     font-weight: 700;
     color: #475569;
-    margin-left: 6px;
+    margin-left: 8px;
   }}
   .cap-pct {{
-    font-size: 22px;
+    font-size: 32px;
     font-weight: 900;
     color: #0055FF;
   }}
   .bar-bg {{
     width: 100%;
-    height: 13px;
+    height: 20px;
     background: #E2E8F0;
     border-radius: 999px;
     overflow: hidden;
+    padding: 3px;
   }}
   .bar-fill {{
     height: 100%;
     width: {pct:.2f}%;
     background: linear-gradient(90deg, #003896 0%, #0066FF 55%, #38BDF8 100%);
     border-radius: 999px;
-    box-shadow: 0 0 12px rgba(0, 102, 255, 0.4);
+    box-shadow: 0 0 14px rgba(0, 102, 255, 0.45);
   }}
   .progress-sub {{
-    font-size: 14px;
+    font-size: 20px;
     font-weight: 600;
     color: #475569;
   }}
@@ -477,20 +501,21 @@ def generer_carte_visuelle(
     font-weight: 800;
   }}
 
+  /* Pied de page */
   .footer {{
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 13.5px;
+    font-size: 19px;
     color: #475569;
     font-weight: 600;
-    border-top: 1px solid rgba(203, 213, 225, 0.7);
-    padding-top: 8px;
+    border-top: 1.5px solid rgba(203, 213, 225, 0.8);
+    padding-top: 18px;
   }}
   .footer-handle {{
-    font-weight: 800;
+    font-weight: 900;
     color: #0F172A;
-    font-size: 14.5px;
+    font-size: 21px;
   }}
 </style>
 </head>
@@ -552,7 +577,7 @@ def generer_carte_visuelle(
     </div>
 
     <div class="footer">
-      <div>Données : unenouvelleenergie.fr · Évolution annuelle 2026</div>
+      <div>Données : unenouvelleenergie.fr</div>
       <div class="footer-handle">@CompteurNE</div>
     </div>
   </div>
@@ -561,9 +586,9 @@ def generer_carte_visuelle(
     const rawData = {json.dumps(chart_data)};
     const ctx = document.getElementById('adhChart').getContext('2d');
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, 210);
-    gradient.addColorStop(0, 'rgba(0, 85, 255, 0.30)');
-    gradient.addColorStop(0.75, 'rgba(0, 85, 255, 0.05)');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 420);
+    gradient.addColorStop(0, 'rgba(0, 85, 255, 0.32)');
+    gradient.addColorStop(0.75, 'rgba(0, 85, 255, 0.06)');
     gradient.addColorStop(1, 'rgba(0, 85, 255, 0.0)');
 
     // Plugin : Bandes de mois alternées, séparations verticales et nom des mois en filigrane
@@ -594,32 +619,32 @@ def generer_carte_visuelle(
           const width = xEnd - xStart;
 
           if (width > 0) {{
-            // Couleur de fond alternée par mois
+            // Alternance de couleurs par mois
             ctx.fillStyle = (idx % 2 === 0)
-              ? 'rgba(226, 232, 240, 0.38)'
-              : 'rgba(239, 246, 255, 0.65)';
+              ? 'rgba(226, 232, 240, 0.42)'
+              : 'rgba(239, 246, 255, 0.72)';
             ctx.fillRect(xStart, top, width, bottom - top);
 
-            // Ligne de séparation verticale au 1er du mois
+            // Séparation verticale au 1er du mois
             if (xStart > left + 4) {{
               ctx.beginPath();
-              ctx.setLineDash([4, 4]);
+              ctx.setLineDash([6, 6]);
               ctx.moveTo(xStart, top);
               ctx.lineTo(xStart, bottom);
-              ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
-              ctx.lineWidth = 1.2;
+              ctx.strokeStyle = 'rgba(148, 163, 184, 0.65)';
+              ctx.lineWidth = 1.5;
               ctx.stroke();
               ctx.setLineDash([]);
             }}
 
-            // Nom du mois en filigrane + repère en bas de colonne
-            if (width > 34) {{
+            // Nom du mois en filigrane vertical/horizontal bien lisible
+            if (width > 42) {{
               const label = monthsShort[curr.getUTCMonth()];
-              ctx.font = '900 18px Inter, sans-serif';
-              ctx.fillStyle = 'rgba(100, 116, 139, 0.22)';
+              ctx.font = '900 22px Inter, sans-serif';
+              ctx.fillStyle = 'rgba(100, 116, 139, 0.24)';
               ctx.textAlign = 'center';
-              ctx.textBaseline = 'bottom';
-              ctx.fillText(label, xStart + width / 2, bottom - 8);
+              ctx.textBaseline = 'top';
+              ctx.fillText(label, xStart + width / 2, top + 14);
             }}
           }}
 
@@ -641,14 +666,14 @@ def generer_carte_visuelle(
         ctx.save();
         
         ctx.beginPath();
-        ctx.arc(lastPoint.x, lastPoint.y, 18, 0, 2 * Math.PI);
-        ctx.strokeStyle = 'rgba(237, 41, 57, 0.40)';
-        ctx.lineWidth = 2;
+        ctx.arc(lastPoint.x, lastPoint.y, 24, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(237, 41, 57, 0.45)';
+        ctx.lineWidth = 2.5;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(lastPoint.x, lastPoint.y, 12, 0, 2 * Math.PI);
-        ctx.fillStyle = 'rgba(237, 41, 57, 0.18)';
+        ctx.arc(lastPoint.x, lastPoint.y, 16, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(237, 41, 57, 0.20)';
         ctx.fill();
 
         ctx.restore();
@@ -661,20 +686,20 @@ def generer_carte_visuelle(
         datasets: [{{
           data: rawData,
           borderColor: '#0055FF',
-          borderWidth: 4.5,
+          borderWidth: 6,
           backgroundColor: gradient,
           fill: true,
           tension: 0.28,
           cubicInterpolationMode: 'monotone',
           pointRadius: (ctx) => {{
             const pt = ctx.raw;
-            return (pt && pt.isLast) ? 7 : 0;
+            return (pt && pt.isLast) ? 9 : 0;
           }},
           pointBackgroundColor: '#ED2939',
           pointBorderColor: '#FFFFFF',
           pointBorderWidth: (ctx) => {{
             const pt = ctx.raw;
-            return (pt && pt.isLast) ? 3 : 0;
+            return (pt && pt.isLast) ? 3.5 : 0;
           }}
         }}]
       }},
@@ -684,7 +709,7 @@ def generer_carte_visuelle(
         maintainAspectRatio: false,
         animation: false,
         layout: {{
-          padding: {{ top: 16, right: 10, bottom: 2, left: 6 }}
+          padding: {{ top: 20, right: 12, bottom: 4, left: 10 }}
         }},
         plugins: {{
           legend: {{ display: false }},
@@ -697,10 +722,11 @@ def generer_carte_visuelle(
               unit: 'month'
             }},
             grid: {{ display: false }},
-            border: {{ color: '#94A3B8', width: 1.5 }},
+            border: {{ color: '#94A3B8', width: 2 }},
             ticks: {{
-              color: '#1E293B',
-              font: {{ family: 'Inter', size: 15, weight: '800' }},
+              color: '#0F172A',
+              font: {{ family: 'Inter', size: 19, weight: '800' }},
+              padding: 10,
               maxRotation: 0,
               autoSkip: false,
               callback: function(value) {{
@@ -715,13 +741,13 @@ def generer_carte_visuelle(
             suggestedMax: {suggested_max_y},
             border: {{ display: false }},
             grid: {{
-              color: 'rgba(148, 163, 184, 0.35)',
-              lineWidth: 1.2
+              color: 'rgba(148, 163, 184, 0.40)',
+              lineWidth: 1.5
             }},
             ticks: {{
-              color: '#1E293B',
-              font: {{ family: 'Inter', size: 15.5, weight: '800' }},
-              padding: 8,
+              color: '#0F172A',
+              font: {{ family: 'Inter', size: 20, weight: '800' }},
+              padding: 12,
               stepSize: 10000,
               callback: function(value) {{
                 return (value / 1000) + 'k';
@@ -738,8 +764,8 @@ def generer_carte_visuelle(
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(
-            viewport={"width": 1200, "height": 675},
-            device_scale_factor=2  # Qualité Retina (2400x1350 px)
+            viewport={"width": 1080, "height": 1350},
+            device_scale_factor=2  # Qualité Retina Mobile (2160x2700 px)
         )
         page.set_content(html_content, wait_until="networkidle")
         page.screenshot(path=output_path)
