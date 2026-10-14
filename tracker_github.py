@@ -38,6 +38,9 @@ JALONS_HISTORIQUES = [
     (datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc), 34651),
 ]
 
+# Heure de Paris (UTC+2 en été, UTC+1 en hiver)
+TZ_FR = timezone(timedelta(hours=2))
+
 def formater_nombre(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
@@ -49,17 +52,18 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     pct = int(progression * 100)
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
-# Heure de Paris (UTC+2 en été, UTC+1 en hiver)
-TZ_FR = timezone(timedelta(hours=2))
-
-def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
-    """Calcule la cadence récente en combinant le rythme par heure et par minute."""
+def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
+    """
+    Retourne un tuple :
+    1. Le texte complet pour le tweet (h + min + plage horaire)
+    2. La valeur courte pour la 3e carte KPI du visuel (ex: '~201' ou '~4.5')
+    """
     if not os.path.isfile(csv_file):
-        return "Données insuffisantes"
+        return "Données insuffisantes", "—"
     with open(csv_file, "r", encoding="utf-8") as f:
         lignes = [r for r in csv.reader(f) if r]
     if len(lignes) < 3:
-        return "Historique en cours de constitution"
+        return "Historique en cours de constitution", "—"
 
     row_prec, row_dernier = lignes[-2], lignes[-1]
     try:
@@ -67,7 +71,7 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
         dt_dernier = datetime.fromisoformat(row_dernier[0]).astimezone(TZ_FR)
         adh_prec, adh_dernier = int(row_prec[1]), int(row_dernier[1])
     except (ValueError, IndexError):
-        return "Format invalide"
+        return "Format invalide", "—"
 
     delta_sec = (dt_dernier - dt_prec).total_seconds()
     delta_heures = delta_sec / 3600
@@ -80,13 +84,18 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     contexte = f"de {h_debut} à {h_fin} ({duree_txt})"
 
     if delta_heures <= 0 or delta_adh <= 0:
-        return f"Rythme calme · {contexte}"
+        return f"Rythme calme · {contexte}", "0"
 
     adh_par_heure = delta_adh / delta_heures
     adh_par_minute = delta_adh / delta_minutes
 
     # Formatage du volet horaire
-    txt_heure = f"~{int(round(adh_par_heure))} adh. / h" if adh_par_heure >= 10 else f"~{adh_par_heure:.1f} adh. / h"
+    if adh_par_heure >= 10:
+        val_kpi = f"~{formater_nombre(int(round(adh_par_heure)))}"
+        txt_heure = f"{val_kpi} adh. / h"
+    else:
+        val_kpi = f"~{adh_par_heure:.1f}"
+        txt_heure = f"{val_kpi} adh. / h"
 
     # Formatage du volet minute
     if adh_par_minute >= 1.0:
@@ -95,19 +104,19 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
         min_par_adh = delta_minutes / delta_adh
         txt_min = f"1 adh. / {int(round(min_par_adh))} min"
 
-    return f"{txt_heure} ({txt_min}) · {contexte}"
+    return f"{txt_heure} ({txt_min}) · {contexte}", val_kpi
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
     if moyenne_jour > 0:
         ecart = ((gain_24h - moyenne_jour) / moyenne_jour) * 100
         if ecart >= 10:
-            return f"🟢 En accélération (+{int(ecart)} % vs moy. 7j)", moyenne_jour
+            return f"🟢 En accélération (+{int(ecart)} % vs moy. 7j)", moyenne_jour, "EN ACCÉLÉRATION"
         elif ecart <= -10:
-            return f"🟠 En décélération ({int(ecart)} % vs moy. 7j)", moyenne_jour
+            return f"🟠 En décélération ({int(ecart)} % vs moy. 7j)", moyenne_jour, "RYTHME MODÉRÉ"
         else:
-            return "⚪ Rythme stable (conforme à la moy. 7j)", moyenne_jour
-    return "⚪ Données en cours d'acquisition", moyenne_jour
+            return "⚪ Rythme stable (conforme à la moy. 7j)", moyenne_jour, "RYTHME STABLE"
+    return "⚪ Données en cours d'acquisition", moyenne_jour, "DYNAMIQUE SUR 7 JOURS"
 
 def extraire_donnees():
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -169,11 +178,18 @@ def generer_carte_visuelle(
     adherents: int,
     gain_24h: int,
     gain_7j: int,
+    cadence_kpi: str,
+    badge_momentum: str,
     cap_precedent: int,
     prochain_cap: int,
+    eta_court: str,
+    maintenant: datetime,
     output_path: str,
 ):
-    """Génère la carte visuelle HTML/CSS + Chart.js avec @CompteurNE dans l'en-tête."""
+    """
+    Génère la carte visuelle avec la disposition exacte du modèle 
+    tout en conservant le thème clair/lumineux du code.
+    """
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
     points = list(JALONS_HISTORIQUES)
@@ -191,15 +207,12 @@ def generer_carte_visuelle(
     for dt, val in points:
         unique_points[int(dt.timestamp() * 1000)] = val
 
-    jalons_ts = {int(j[0].timestamp() * 1000) for j in JALONS_HISTORIQUES}
-    
     chart_data = []
     sorted_ts = sorted(unique_points.keys())
     for i, ts in enumerate(sorted_ts):
         chart_data.append({
             "x": ts,
             "y": unique_points[ts],
-            "isMilestone": ts in jalons_ts,
             "isLast": (i == len(sorted_ts) - 1)
         })
 
@@ -208,6 +221,12 @@ def generer_carte_visuelle(
     pct = min(100.0, max(0.0, (gain_tranche / total_tranche) * 100))
     pct_int = int(pct)
     reste = prochain_cap - adherents
+
+    dt_fr = maintenant.astimezone(TZ_FR)
+    date_header = f"{dt_fr.day} {MOIS_FR[dt_fr.month].upper()} {dt_fr.year}"
+
+    max_y = max(unique_points.values()) if unique_points else adherents
+    suggested_max_y = ((max_y // 5000) + 1) * 5000
 
     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -232,10 +251,25 @@ def generer_carte_visuelle(
     overflow: hidden;
     position: relative;
   }}
+  /* Grille de fond subtile dans les tons clairs du thème */
+  body::before {{
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: 
+      linear-gradient(to right, rgba(203, 213, 225, 0.28) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(203, 213, 225, 0.28) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }}
+
   .top-banner {{
-    height: 10px;
+    height: 8px;
     width: 100%;
     display: flex;
+    position: relative;
+    z-index: 2;
   }}
   .top-banner div {{ flex: 1; }}
   .b-blue {{ background: #002654; }}
@@ -243,177 +277,197 @@ def generer_carte_visuelle(
   .b-red {{ background: #ED2939; }}
 
   .container {{
-    padding: 34px 56px 26px 56px;
+    padding: 28px 56px 22px 56px;
     flex: 1;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+    position: relative;
+    z-index: 1;
   }}
 
-  .header {{
+  /* En-tête : Date à gauche, Pilule Baromètre à droite (sans logo) */
+  .top-row {{
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
-  }}
-
-  .brand-title {{
-    display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 10px;
   }}
-
-  .flag-icon {{
-    width: 28px;
-    height: 20px;
-    display: flex;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 2px 5px rgba(15, 23, 42, 0.12);
+  .eyebrow {{
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #0284C7;
+    text-transform: uppercase;
+  }}
+  .pill-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.9);
     border: 1px solid #CBD5E1;
-  }}
-  .flag-icon div {{ flex: 1; }}
-
-  .title-main {{
-    font-size: 18px;
-    font-weight: 900;
-    letter-spacing: 0.6px;
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 1px;
     color: #0F172A;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
   }}
-  .title-sub {{
-    font-size: 17px;
-    font-weight: 700;
-    color: #64748B;
+  .pill-dot {{
+    width: 10px;
+    height: 10px;
+    background: #ED2939;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px rgba(237, 41, 57, 0.2);
   }}
 
-  .hero-number {{
-    display: flex;
-    align-items: baseline;
-    gap: 16px;
+  /* Gros chiffre central */
+  .hero-block {{
+    margin-top: -6px;
   }}
   .total-val {{
-    font-size: 76px;
+    font-size: 86px;
     font-weight: 900;
-    letter-spacing: -2.5px;
-    line-height: 1;
+    letter-spacing: -3px;
+    line-height: 0.98;
     background: linear-gradient(95deg, #0F172A 0%, #1E3A8A 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }}
-  .total-unit {{
-    font-size: 30px;
-    font-weight: 800;
-    color: #0284C7;
+  .total-sub {{
+    font-size: 24px;
+    font-weight: 700;
+    color: #334155;
+    margin-top: 4px;
   }}
 
-  .right-header {{
+  /* 3 Cartes KPI alignées */
+  .kpi-row {{
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 14px;
-  }}
-
-  .handle-badge {{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: #0F172A;
-    color: #FFFFFF;
-    padding: 7px 16px;
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 800;
-    letter-spacing: 0.3px;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
-  }}
-
-  .kpi-group {{
-    display: flex;
-    gap: 14px;
+    gap: 16px;
+    margin-top: 4px;
   }}
   .kpi-card {{
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.92);
     border: 1px solid #E2E8F0;
     border-radius: 16px;
-    padding: 14px 22px;
-    min-width: 160px;
+    padding: 14px 24px;
+    width: 225px;
     box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05);
   }}
+  .kpi-val {{
+    font-size: 30px;
+    font-weight: 900;
+    letter-spacing: -0.8px;
+    line-height: 1.1;
+  }}
+  .val-24h {{ color: #059669; }}
+  .val-7j {{ color: #0284C7; }}
+  .val-rate {{ color: #0F172A; }}
   .kpi-label {{
     font-size: 11px;
     font-weight: 800;
     color: #64748B;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.9px;
     text-transform: uppercase;
-    margin-bottom: 4px;
+    margin-top: 5px;
   }}
-  .kpi-val {{
-    font-size: 28px;
-    font-weight: 900;
-    letter-spacing: -0.8px;
-  }}
-  .val-24h {{ color: #059669; }}
-  .val-7j {{ color: #0284C7; }}
 
-  .progress-box {{
-    background: rgba(255, 255, 255, 0.85);
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 16px 24px;
-    box-shadow: 0 4px 15px rgba(15, 23, 42, 0.03);
+  /* Zone Graphique épurée avec bulle callout */
+  .chart-wrapper {{
+    position: relative;
+    height: 215px;
+    width: 100%;
+    margin-top: 2px;
   }}
-  .progress-top {{
+  .callout-box {{
+    position: absolute;
+    right: 195px;
+    top: 32px;
+    background: #FFFFFF;
+    border: 1.5px solid #CBD5E1;
+    border-radius: 12px;
+    padding: 9px 16px;
+    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1);
+    z-index: 5;
+  }}
+  .callout-box::after {{
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    right: 18px;
+    width: 12px;
+    height: 12px;
+    background: #FFFFFF;
+    border-right: 1.5px solid #CBD5E1;
+    border-bottom: 1.5px solid #CBD5E1;
+    transform: rotate(45deg);
+  }}
+  .callout-title {{
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #64748B;
+    text-transform: uppercase;
+  }}
+  .callout-val {{
+    font-size: 15px;
+    font-weight: 900;
+    color: #0F172A;
+    margin-top: 1px;
+  }}
+
+  /* Section Progression en bas */
+  .progress-section {{
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }}
+  .progress-header {{
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 10px;
   }}
   .cap-title {{
-    font-size: 16px;
-    font-weight: 800;
-    color: #1E293B;
+    font-size: 17px;
+    font-weight: 900;
+    color: #0F172A;
   }}
   .cap-title span {{
     font-weight: 600;
     color: #64748B;
-    font-size: 14px;
     margin-left: 6px;
   }}
-  .cap-stats {{
-    font-size: 14px;
-    font-weight: 600;
-    color: #475569;
-  }}
-  .cap-stats strong {{
+  .cap-pct {{
+    font-size: 22px;
+    font-weight: 900;
     color: #0055FF;
-    font-weight: 800;
   }}
   .bar-bg {{
     width: 100%;
-    height: 14px;
+    height: 13px;
     background: #E2E8F0;
     border-radius: 999px;
     overflow: hidden;
-    padding: 2px;
   }}
   .bar-fill {{
     height: 100%;
     width: {pct:.2f}%;
     background: linear-gradient(90deg, #003896 0%, #0066FF 55%, #38BDF8 100%);
     border-radius: 999px;
-    box-shadow: 0 0 12px rgba(0, 102, 255, 0.45);
+    box-shadow: 0 0 12px rgba(0, 102, 255, 0.4);
+  }}
+  .progress-sub {{
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #64748B;
+  }}
+  .progress-sub strong {{
+    color: #0F172A;
+    font-weight: 800;
   }}
 
-  .chart-card {{
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 20px;
-    padding: 20px 24px 14px 20px;
-    height: 315px;
-    box-shadow: 0 12px 30px -8px rgba(15, 23, 42, 0.06);
-    position: relative;
-  }}
-
+  /* Pied de page */
   .footer {{
     display: flex;
     justify-content: space-between;
@@ -421,7 +475,12 @@ def generer_carte_visuelle(
     font-size: 13px;
     color: #64748B;
     font-weight: 600;
-    padding-top: 2px;
+    border-top: 1px solid rgba(203, 213, 225, 0.6);
+    padding-top: 10px;
+  }}
+  .footer-handle {{
+    font-weight: 800;
+    color: #0F172A;
   }}
 </style>
 </head>
@@ -433,58 +492,58 @@ def generer_carte_visuelle(
   </div>
 
   <div class="container">
-    <div class="header">
-      <div>
-        <div class="brand-title">
-          <div class="flag-icon">
-            <div class="b-blue"></div>
-            <div class="b-white"></div>
-            <div class="b-red"></div>
-          </div>
-          <span class="title-main">BAROMÈTRE D'ADHÉSION</span>
-        </div>
-        <div class="hero-number">
-          <span class="total-val">{formater_nombre(adherents)}</span>
-          <span class="total-unit">adhérents</span>
-        </div>
-      </div>
-
-      <div class="right-header">
-        <div class="handle-badge">@CompteurNE</div>
-        <div class="kpi-group">
-          <div class="kpi-card">
-            <div class="kpi-label">Dernières 24h</div>
-            <div class="kpi-val val-24h">+{formater_nombre(gain_24h)}</div>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-label">Sur 7 jours</div>
-            <div class="kpi-val val-7j">+{formater_nombre(gain_7j)}</div>
-          </div>
-        </div>
+    <div class="top-row">
+      <div class="eyebrow">ADHÉRENTS · {date_header}</div>
+      <div class="pill-badge">
+        <span class="pill-dot"></span>
+        BAROMÈTRE D'ADHÉSION
       </div>
     </div>
 
-    <div class="progress-box">
-      <div class="progress-top">
-        <div class="cap-title">
-          Cap {prochain_cap // 1000}k <span>(tranche {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k)</span>
-        </div>
-        <div class="cap-stats">
-          <strong>{pct_int} % atteint</strong> (+{formater_nombre(gain_tranche)} / {formater_nombre(total_tranche)}) &nbsp;·&nbsp; Reste <strong>{formater_nombre(reste)}</strong> adhésions
-        </div>
+    <div class="hero-block">
+      <div class="total-val">{formater_nombre(adherents)}</div>
+      <div class="total-sub">adhérents à Nouvelle Énergie</div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-val val-24h">+{formater_nombre(gain_24h)}</div>
+        <div class="kpi-label">DERNIÈRES 24 H</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val val-7j">+{formater_nombre(gain_7j)}</div>
+        <div class="kpi-label">SUR 7 JOURS</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val val-rate">{cadence_kpi}</div>
+        <div class="kpi-label">ADHÉSIONS / HEURE</div>
+      </div>
+    </div>
+
+    <div class="chart-wrapper">
+      <div class="callout-box">
+        <div class="callout-title">{badge_momentum}</div>
+        <div class="callout-val">+{formater_nombre(gain_7j)} en 7 jours</div>
+      </div>
+      <canvas id="adhChart"></canvas>
+    </div>
+
+    <div class="progress-section">
+      <div class="progress-header">
+        <div class="cap-title">Cap <span>{formater_nombre(prochain_cap)}</span></div>
+        <div class="cap-pct">{pct_int} %</div>
       </div>
       <div class="bar-bg">
         <div class="bar-fill"></div>
       </div>
-    </div>
-
-    <div class="chart-card">
-      <canvas id="adhChart"></canvas>
+      <div class="progress-sub">
+        Tranche {formater_nombre(cap_precedent)} ➔ {formater_nombre(prochain_cap)} &nbsp;·&nbsp; Reste <strong>{formater_nombre(reste)}</strong> &nbsp;·&nbsp; Projection <strong>{eta_court}</strong>
+      </div>
     </div>
 
     <div class="footer">
-      <div>Données · Source : unenouvelleenergie.fr</div>
-      <div>Actualisé automatiquement</div>
+      <div>Données : unenouvelleenergie.fr</div>
+      <div class="footer-handle">@CompteurNE</div>
     </div>
   </div>
 
@@ -492,10 +551,37 @@ def generer_carte_visuelle(
     const rawData = {json.dumps(chart_data)};
     const ctx = document.getElementById('adhChart').getContext('2d');
 
-    const gradient = ctx.createLinearGradient(0, 0, 0, 275);
-    gradient.addColorStop(0, 'rgba(0, 102, 255, 0.26)');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(0, 102, 255, 0.25)');
     gradient.addColorStop(0.75, 'rgba(0, 102, 255, 0.04)');
     gradient.addColorStop(1, 'rgba(0, 102, 255, 0.0)');
+
+    // Plugin pour dessiner le double halo autour du point actuel (comme sur l'image)
+    const haloPlugin = {{
+      id: 'haloPlugin',
+      afterDatasetsDraw(chart) {{
+        const meta = chart.getDatasetMeta(0);
+        if (!meta.data.length) return;
+        const lastPoint = meta.data[meta.data.length - 1];
+        const ctx = chart.ctx;
+        ctx.save();
+        
+        // Cercle extérieur fin
+        ctx.beginPath();
+        ctx.arc(lastPoint.x, lastPoint.y, 18, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(237, 41, 57, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Halo doux intermédiaire
+        ctx.beginPath();
+        ctx.arc(lastPoint.x, lastPoint.y, 12, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(237, 41, 57, 0.15)';
+        ctx.fill();
+
+        ctx.restore();
+      }}
+    }};
 
     new Chart(ctx, {{
       type: 'line',
@@ -510,31 +596,23 @@ def generer_carte_visuelle(
           cubicInterpolationMode: 'monotone',
           pointRadius: (ctx) => {{
             const pt = ctx.raw;
-            if (!pt) return 0;
-            if (pt.isLast) return 8;
-            if (pt.isMilestone) return 5.5;
-            return 0;
+            return (pt && pt.isLast) ? 6.5 : 0;
           }},
-          pointBackgroundColor: (ctx) => {{
-            const pt = ctx.raw;
-            if (!pt) return '#0055FF';
-            if (pt.isLast) return '#ED2939';
-            if (pt.isMilestone) return '#002654';
-            return '#0055FF';
-          }},
+          pointBackgroundColor: '#ED2939',
           pointBorderColor: '#FFFFFF',
           pointBorderWidth: (ctx) => {{
             const pt = ctx.raw;
-            return (pt && (pt.isLast || pt.isMilestone)) ? 2.5 : 0;
+            return (pt && pt.isLast) ? 2.5 : 0;
           }}
         }}]
       }},
+      plugins: [haloPlugin],
       options: {{
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
         layout: {{
-          padding: {{ top: 10, right: 16, bottom: 2, left: 4 }}
+          padding: {{ top: 20, right: 18, bottom: 0, left: 6 }}
         }},
         plugins: {{
           legend: {{ display: false }},
@@ -545,33 +623,35 @@ def generer_carte_visuelle(
             type: 'time',
             time: {{
               unit: 'day',
-              displayFormats: {{ day: 'dd MMM' }}
+              displayFormats: {{ day: 'd MMM' }}
             }},
             grid: {{ display: false }},
-            border: {{ color: '#E2E8F0' }},
+            border: {{ color: '#CBD5E1' }},
             ticks: {{
               color: '#64748B',
               font: {{ family: 'Inter', size: 12, weight: '600' }},
-              maxTicksLimit: 9,
+              maxTicksLimit: 5,
               callback: function(value) {{
                 const d = new Date(value);
-                return d.toLocaleDateString('fr-FR', {{ day: '2-digit', month: 'short' }});
+                return d.toLocaleDateString('fr-FR', {{ day: 'numeric', month: 'short' }});
               }}
             }}
           }},
           y: {{
+            position: 'right',
             min: 24000,
-            suggestedMax: {max(unique_points.values()) + 1200},
-            border: {{ display: false, dash: [5, 5] }},
+            suggestedMax: {suggested_max_y},
+            border: {{ display: false }},
             grid: {{
-              color: '#F1F5F9',
-              lineWidth: 1.5
+              color: 'rgba(203, 213, 225, 0.45)',
+              lineWidth: 1
             }},
             ticks: {{
               color: '#64748B',
-              font: {{ family: 'Inter', size: 12, weight: '600' }},
+              font: {{ family: 'Inter', size: 11.5, weight: '600' }},
+              stepSize: 10000,
               callback: function(value) {{
-                return value.toString().replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, " ");
+                return (value / 1000) + 'k';
               }}
             }}
           }}
@@ -582,17 +662,7 @@ def generer_carte_visuelle(
 </body>
 </html>"""
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(
-            viewport={"width": 1200, "height": 675},
-            device_scale_factor=2
-        )
-        page.set_content(html_content, wait_until="networkidle")
-        page.screenshot(path=output_path)
-        browser.close()
-
-    # 4. Capture HD via Playwright
+    # Capture HD via Playwright
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(
@@ -689,8 +759,8 @@ def run():
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
     gain_24h = calculer_gain_24h(maintenant, adherents)
 
-    cadence_txt = calculer_cadence_recente(CSV_FILE)
-    momentum_txt, moyenne_jour_7j = calculer_momentum(gain_24h, gain_7j)
+    cadence_txt, cadence_kpi = calculer_cadence_recente(CSV_FILE)
+    momentum_txt, moyenne_jour_7j, badge_momentum = calculer_momentum(gain_24h, gain_7j)
 
     palier_actuel = (adherents // PAS_PALIER) * PAS_PALIER
     etat = lire_etat()
@@ -734,8 +804,10 @@ def run():
             jours_restants = reste_avant_cap / moyenne_jour_7j
             eta_date = maintenant + timedelta(days=jours_restants)
             eta_texte = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]} {eta_date.year}"
+            eta_court = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]}"
         else:
             eta_texte = "Indéterminée"
+            eta_court = "—"
 
         tweet_texte = (
             f"📊 @nouv_energie · Baromètre\n\n"
@@ -748,7 +820,18 @@ def run():
             f"▫️ Projection : {eta_texte}"
         )
 
-        generer_carte_visuelle(adherents, gain_24h, gain_7j, cap_precedent, prochain_cap, CHART_FILE)
+        generer_carte_visuelle(
+            adherents=adherents,
+            gain_24h=gain_24h,
+            gain_7j=gain_7j,
+            cadence_kpi=cadence_kpi,
+            badge_momentum=badge_momentum,
+            cap_precedent=cap_precedent,
+            prochain_cap=prochain_cap,
+            eta_court=eta_court,
+            maintenant=maintenant,
+            output_path=CHART_FILE,
+        )
 
         email_corps = (
             f"Bonjour,\n\n"
