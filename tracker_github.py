@@ -49,8 +49,10 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     pct = int(progression * 100)
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
+# Heure de Paris (UTC+2 en été, UTC+1 en hiver)
+TZ_FR = timezone(timedelta(hours=2))
+
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
-    """Calcule le rythme horaire entre les deux dernières lignes du CSV."""
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
     with open(csv_file, "r", encoding="utf-8") as f:
@@ -60,8 +62,8 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
 
     row_prec, row_dernier = lignes[-2], lignes[-1]
     try:
-        dt_prec = datetime.fromisoformat(row_prec[0])
-        dt_dernier = datetime.fromisoformat(row_dernier[0])
+        dt_prec = datetime.fromisoformat(row_prec[0]).astimezone(TZ_FR)
+        dt_dernier = datetime.fromisoformat(row_dernier[0]).astimezone(TZ_FR)
         adh_prec, adh_dernier = int(row_prec[1]), int(row_dernier[1])
     except (ValueError, IndexError):
         return "Format invalide"
@@ -71,17 +73,14 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     delta_minutes = int(round(delta_sec / 60))
     delta_adh = adh_dernier - adh_prec
 
-    # Heure relevée directement depuis l'horodatage stocké
-    h_prec = dt_prec.strftime("%Hh%M")
+    # Heures locales françaises
+    h_debut = dt_prec.strftime("%Hh%M")
+    h_fin = dt_dernier.strftime("%Hh%M")
 
-    if delta_minutes < 60:
-        duree_txt = f"{delta_minutes} min"
-    else:
-        h = int(delta_heures)
-        m = int(round((delta_heures - h) * 60))
-        duree_txt = f"{h}h{m:02d}" if m > 0 else f"{h}h"
+    duree_txt = f"{delta_minutes} min" if delta_minutes < 60 else f"{int(delta_heures)}h{int(delta_minutes % 60):02d}"
 
-    contexte = f"sur {duree_txt} (depuis {h_prec})"
+    # Formulation claire de la fenêtre observée
+    contexte = f"de {h_debut} à {h_fin} ({duree_txt})"
 
     if delta_heures <= 0 or delta_adh <= 0:
         return f"Rythme calme {contexte}"
@@ -92,8 +91,7 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     elif adh_par_heure >= 1.0:
         val_txt = f"~{adh_par_heure:.1f} adh. / h"
     else:
-        heures_par_adh = delta_heures / delta_adh
-        val_txt = f"1 adh. toutes les {heures_par_adh:.1f} h"
+        val_txt = f"1 adh. toutes les {delta_heures / delta_adh:.1f} h"
 
     return f"{val_txt} · {contexte}"
 
