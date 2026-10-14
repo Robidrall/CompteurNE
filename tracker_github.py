@@ -12,7 +12,7 @@ import requests
 from playwright.sync_api import sync_playwright
 
 # --- Paramètres généraux ---
-PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
+PAS_PALIER = 1        # Alerte tous les 25 nouveaux adhérents
 PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
 SEUIL_HEURES = 2       # Notification récurrente max
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
