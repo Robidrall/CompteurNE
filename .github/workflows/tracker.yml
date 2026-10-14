@@ -21,8 +21,15 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Installer les dependances
-        run: pip install -r requirements.txt
+      - name: Installer les dependances Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Étape indispensable pour permettre à Playwright d'éditer/capturer la carte d'adhésion via Chromium
+      - name: Installer Playwright et ses dependances systeme
+        run: |
+          playwright install --with-deps chromium
 
       - name: Executer le releve
         env:
