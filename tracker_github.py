@@ -12,7 +12,7 @@ import requests
 from playwright.sync_api import sync_playwright
 
 # --- Paramètres généraux ---
-PAS_PALIER = 1        # Alerte tous les 25 nouveaux adhérents
+PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
 PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
 SEUIL_HEURES = 2       # Notification récurrente max
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
@@ -32,12 +32,10 @@ DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
 MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", 
            "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
-# Jalons sur l'ensemble de l'année 2026 pour illustrer l'accélération fulgurante récente
+# Date de départ du graphique (1er septembre / fin août)
+DATE_DEBUT_GRAPHE = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+
 JALONS_HISTORIQUES = [
-    (datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc), 16500),
-    (datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc), 18200),
-    (datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc), 20400),
-    (datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc), 23100),
     (datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc), 26500),
     (datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc), 29500),
     (datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc), 34651),
@@ -60,7 +58,7 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
     """
     Retourne un tuple :
-    1. Le texte complet pour le tweet (h + min + plage horaire)
+    1. Le texte pour le tweet (h + min, sans la plage horaire 'de Xh à Yh')
     2. La valeur courte pour la 3e carte KPI du visuel (ex: '~201' ou '~4.5')
     """
     if not os.path.isfile(csv_file):
@@ -72,8 +70,8 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
 
     row_prec, row_dernier = lignes[-2], lignes[-1]
     try:
-        dt_prec = datetime.fromisoformat(row_prec[0]).astimezone(TZ_FR)
-        dt_dernier = datetime.fromisoformat(row_dernier[0]).astimezone(TZ_FR)
+        dt_prec = datetime.fromisoformat(row_prec[0])
+        dt_dernier = datetime.fromisoformat(row_dernier[0])
         adh_prec, adh_dernier = int(row_prec[1]), int(row_dernier[1])
     except (ValueError, IndexError):
         return "Format invalide", "—"
@@ -83,13 +81,8 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
     delta_minutes = delta_sec / 60
     delta_adh = adh_dernier - adh_prec
 
-    h_debut = dt_prec.strftime("%Hh%M")
-    h_fin = dt_dernier.strftime("%Hh%M")
-    duree_txt = f"{int(round(delta_minutes))} min" if delta_minutes < 60 else f"{int(delta_heures)}h{int(delta_minutes % 60):02d}"
-    contexte = f"de {h_debut} à {h_fin} ({duree_txt})"
-
     if delta_heures <= 0 or delta_adh <= 0:
-        return f"Rythme calme · {contexte}", "0"
+        return "Rythme temporairement calme", "0"
 
     adh_par_heure = delta_adh / delta_heures
     adh_par_minute = delta_adh / delta_minutes
@@ -109,7 +102,7 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
         min_par_adh = delta_minutes / delta_adh
         txt_min = f"1 adh. / {int(round(min_par_adh))} min"
 
-    return f"{txt_heure} ({txt_min}) · {contexte}", val_kpi
+    return f"{txt_heure} ({txt_min})", val_kpi
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
@@ -146,7 +139,6 @@ def extraire_donnees():
         if jours:
             idx_7j = -7 if len(jours) >= 7 else 0
             gain_7j = adherents - jours[idx_7j].get("adherents", adherents)
-            # Récupération de tous les points historiques fournis par l'API officielle
             for j in jours:
                 d_str = j.get("date") or j.get("jour") or j.get("timestamp")
                 val = j.get("adherents")
@@ -156,7 +148,8 @@ def extraire_donnees():
                             dt_j = datetime.fromisoformat(str(d_str).replace("Z", "+00:00"))
                         else:
                             dt_j = datetime.fromisoformat(f"{d_str}T12:00:00+00:00")
-                        points_api.append((dt_j, int(val)))
+                        if dt_j >= DATE_DEBUT_GRAPHE:
+                            points_api.append((dt_j, int(val)))
                     except ValueError:
                         continue
 
@@ -208,17 +201,19 @@ def generer_carte_visuelle(
 ):
     """
     Génère la carte visuelle au format Portrait Mobile 4:5 (1080x1350)
-    avec mois en filigrane, séparations verticales et polices grand format.
+    depuis le 1er septembre, avec mois en filigrane et grandes polices.
     """
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    # Fusion des jalons annuels + historique API + CSV local
+    # Fusion des jalons (depuis fin août / 1er sept.) + historique API + CSV local
     points = list(JALONS_HISTORIQUES) + list(points_api)
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
             for row in list(csv.reader(f))[1:]:
                 try:
-                    points.append((datetime.fromisoformat(row[0]), int(row[1])))
+                    dt_row = datetime.fromisoformat(row[0])
+                    if dt_row >= DATE_DEBUT_GRAPHE:
+                        points.append((dt_row, int(row[1])))
                 except (ValueError, IndexError):
                     continue
 
@@ -246,8 +241,6 @@ def generer_carte_visuelle(
     dt_fr = maintenant.astimezone(TZ_FR)
     date_header = f"{dt_fr.day} {MOIS_FR[dt_fr.month].upper()} {dt_fr.year}"
 
-    min_y_val = min(unique_points.values()) if unique_points else 15000
-    min_y_axis = max(0, ((min_y_val - 2000) // 5000) * 5000)
     max_y = max(unique_points.values()) if unique_points else adherents
     suggested_max_y = ((max_y // 5000) + 1) * 5000
 
@@ -402,7 +395,7 @@ def generer_carte_visuelle(
     position: relative;
     height: 470px;
     width: 100%;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.88);
     border: 1.5px solid #CBD5E1;
     border-radius: 24px;
     padding: 18px 16px 10px 16px;
@@ -410,8 +403,8 @@ def generer_carte_visuelle(
   }}
   .callout-box {{
     position: absolute;
-    right: 170px;
-    top: 42px;
+    right: 175px;
+    top: 46px;
     background: #FFFFFF;
     border: 2.5px solid #0055FF;
     border-radius: 16px;
@@ -447,7 +440,7 @@ def generer_carte_visuelle(
 
   /* Section Progression en bas */
   .progress-section {{
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.92);
     border: 1.5px solid #CBD5E1;
     border-radius: 22px;
     padding: 22px 30px;
@@ -591,14 +584,14 @@ def generer_carte_visuelle(
     gradient.addColorStop(0.75, 'rgba(0, 85, 255, 0.06)');
     gradient.addColorStop(1, 'rgba(0, 85, 255, 0.0)');
 
-    // Plugin : Bandes de mois alternées, séparations verticales et nom des mois en filigrane
+    // Plugin : Bandes de mois colorées, séparations verticales et nom des mois en grand filigrane
     const monthBandsPlugin = {{
       id: 'monthBandsPlugin',
       beforeDatasetsDraw(chart) {{
         const {{ ctx, chartArea: {{ top, bottom, left, right }}, scales: {{ x }} }} = chart;
         if (!x) return;
 
-        const monthsShort = ['JANV.', 'FÉVR.', 'MARS', 'AVR.', 'MAI', 'JUIN', 'JUIL.', 'AOÛT', 'SEPT.', 'OCT.', 'NOV.', 'DÉC.'];
+        const monthsFull = ['JANVIER', 'FÉVRIER', 'MARS', 'AVRIL', 'MAI', 'JUIN', 'JUILLET', 'AOÛT', 'SEPTEMBRE', 'OCTOBRE', 'NOVEMBRE', 'DÉCEMBRE'];
         const minTs = x.min;
         const maxTs = x.max;
 
@@ -619,32 +612,32 @@ def generer_carte_visuelle(
           const width = xEnd - xStart;
 
           if (width > 0) {{
-            // Alternance de couleurs par mois
+            // Alternance de couleurs bien distinctes pour chaque mois
             ctx.fillStyle = (idx % 2 === 0)
-              ? 'rgba(226, 232, 240, 0.42)'
-              : 'rgba(239, 246, 255, 0.72)';
+              ? 'rgba(226, 232, 240, 0.45)'
+              : 'rgba(219, 234, 254, 0.55)';
             ctx.fillRect(xStart, top, width, bottom - top);
 
             // Séparation verticale au 1er du mois
-            if (xStart > left + 4) {{
+            if (xStart > left + 10) {{
               ctx.beginPath();
-              ctx.setLineDash([6, 6]);
+              ctx.setLineDash([7, 6]);
               ctx.moveTo(xStart, top);
               ctx.lineTo(xStart, bottom);
-              ctx.strokeStyle = 'rgba(148, 163, 184, 0.65)';
-              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = 'rgba(100, 116, 139, 0.65)';
+              ctx.lineWidth = 2;
               ctx.stroke();
               ctx.setLineDash([]);
             }}
 
-            // Nom du mois en filigrane vertical/horizontal bien lisible
-            if (width > 42) {{
-              const label = monthsShort[curr.getUTCMonth()];
-              ctx.font = '900 22px Inter, sans-serif';
-              ctx.fillStyle = 'rgba(100, 116, 139, 0.24)';
+            // Nom du mois en grand filigrane
+            if (width > 90) {{
+              const label = monthsFull[curr.getUTCMonth()];
+              ctx.font = '900 34px Inter, sans-serif';
+              ctx.fillStyle = 'rgba(100, 116, 139, 0.18)';
               ctx.textAlign = 'center';
-              ctx.textBaseline = 'top';
-              ctx.fillText(label, xStart + width / 2, top + 14);
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(label, xStart + width / 2, bottom - 18);
             }}
           }}
 
@@ -689,7 +682,7 @@ def generer_carte_visuelle(
           borderWidth: 6,
           backgroundColor: gradient,
           fill: true,
-          tension: 0.28,
+          tension: 0.32,
           cubicInterpolationMode: 'monotone',
           pointRadius: (ctx) => {{
             const pt = ctx.raw;
@@ -719,7 +712,7 @@ def generer_carte_visuelle(
           x: {{
             type: 'time',
             time: {{
-              unit: 'month'
+              unit: 'day'
             }},
             grid: {{ display: false }},
             border: {{ color: '#94A3B8', width: 2 }},
@@ -728,16 +721,16 @@ def generer_carte_visuelle(
               font: {{ family: 'Inter', size: 19, weight: '800' }},
               padding: 10,
               maxRotation: 0,
-              autoSkip: false,
+              maxTicksLimit: 5,
               callback: function(value) {{
                 const d = new Date(value);
-                return d.toLocaleDateString('fr-FR', {{ month: 'short' }}).toUpperCase();
+                return d.toLocaleDateString('fr-FR', {{ day: 'numeric', month: 'short' }});
               }}
             }}
           }},
           y: {{
             position: 'right',
-            min: {min_y_axis},
+            min: 24000,
             suggestedMax: {suggested_max_y},
             border: {{ display: false }},
             grid: {{
