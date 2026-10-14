@@ -466,7 +466,7 @@ def generer_carte_visuelle(
     </div>
 
     <div class="footer">
-      <div>Données publiques non-officielles · Source : unenouvelleenergie.fr</div>
+      <div>Données · Source : unenouvelleenergie.fr</div>
       <div>Actualisé automatiquement</div>
     </div>
   </div>
