@@ -53,6 +53,7 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
 TZ_FR = timezone(timedelta(hours=2))
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
+    """Calcule la cadence récente en combinant le rythme par heure et par minute."""
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
     with open(csv_file, "r", encoding="utf-8") as f:
@@ -70,30 +71,31 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
 
     delta_sec = (dt_dernier - dt_prec).total_seconds()
     delta_heures = delta_sec / 3600
-    delta_minutes = int(round(delta_sec / 60))
+    delta_minutes = delta_sec / 60
     delta_adh = adh_dernier - adh_prec
 
-    # Heures locales françaises
     h_debut = dt_prec.strftime("%Hh%M")
     h_fin = dt_dernier.strftime("%Hh%M")
-
-    duree_txt = f"{delta_minutes} min" if delta_minutes < 60 else f"{int(delta_heures)}h{int(delta_minutes % 60):02d}"
-
-    # Formulation claire de la fenêtre observée
+    duree_txt = f"{int(round(delta_minutes))} min" if delta_minutes < 60 else f"{int(delta_heures)}h{int(delta_minutes % 60):02d}"
     contexte = f"de {h_debut} à {h_fin} ({duree_txt})"
 
     if delta_heures <= 0 or delta_adh <= 0:
-        return f"Rythme calme {contexte}"
+        return f"Rythme calme · {contexte}"
 
     adh_par_heure = delta_adh / delta_heures
-    if adh_par_heure >= 10:
-        val_txt = f"~{int(round(adh_par_heure))} adh. / h"
-    elif adh_par_heure >= 1.0:
-        val_txt = f"~{adh_par_heure:.1f} adh. / h"
-    else:
-        val_txt = f"1 adh. toutes les {delta_heures / delta_adh:.1f} h"
+    adh_par_minute = delta_adh / delta_minutes
 
-    return f"{val_txt} · {contexte}"
+    # Formatage du volet horaire
+    txt_heure = f"~{int(round(adh_par_heure))} adh. / h" if adh_par_heure >= 10 else f"~{adh_par_heure:.1f} adh. / h"
+
+    # Formatage du volet minute
+    if adh_par_minute >= 1.0:
+        txt_min = f"~{adh_par_minute:.1f} adh. / min"
+    else:
+        min_par_adh = delta_minutes / delta_adh
+        txt_min = f"1 adh. / {int(round(min_par_adh))} min"
+
+    return f"{txt_heure} ({txt_min}) · {contexte}"
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
