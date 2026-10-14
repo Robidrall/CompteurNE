@@ -50,10 +50,7 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
-    """
-    Calcule le rythme horaire entre les deux derniers relevés 
-    en précisant la fenêtre horaire observée.
-    """
+    """Calcule le rythme horaire entre les deux dernières lignes du CSV."""
     if not os.path.isfile(csv_file):
         return "Données insuffisantes"
     with open(csv_file, "r", encoding="utf-8") as f:
@@ -74,11 +71,9 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
     delta_minutes = int(round(delta_sec / 60))
     delta_adh = adh_dernier - adh_prec
 
-    # Conversion en heure de Paris pour le contexte
-    tz_fr = ZoneInfo("Europe/Paris")
-    h_prec = dt_prec.astimezone(tz_fr).strftime("%Hh%M")
+    # Heure relevée directement depuis l'horodatage stocké
+    h_prec = dt_prec.strftime("%Hh%M")
 
-    # Formulation de la durée
     if delta_minutes < 60:
         duree_txt = f"{delta_minutes} min"
     else:
@@ -86,10 +81,10 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
         m = int(round((delta_heures - h) * 60))
         duree_txt = f"{h}h{m:02d}" if m > 0 else f"{h}h"
 
-    contexte_temps = f"sur {duree_txt} (depuis {h_prec})"
+    contexte = f"sur {duree_txt} (depuis {h_prec})"
 
     if delta_heures <= 0 or delta_adh <= 0:
-        return f"Rythme calme {contexte_temps}"
+        return f"Rythme calme {contexte}"
 
     adh_par_heure = delta_adh / delta_heures
     if adh_par_heure >= 10:
@@ -100,7 +95,7 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> str:
         heures_par_adh = delta_heures / delta_adh
         val_txt = f"1 adh. toutes les {heures_par_adh:.1f} h"
 
-    return f"{val_txt} · {contexte_temps}"
+    return f"{val_txt} · {contexte}"
 
 def calculer_momentum(gain_24h: int, gain_7j: int):
     moyenne_jour = gain_7j / 7 if gain_7j > 0 else 0
