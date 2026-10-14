@@ -156,10 +156,9 @@ def generer_carte_visuelle(
     prochain_cap: int,
     output_path: str,
 ):
-    """Génère une carte moderne via HTML/CSS + Chart.js et prend une capture HD."""
+    """Génère la carte visuelle HTML/CSS + Chart.js avec @CompteurNE dans l'en-tête."""
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    # 1. Préparation des données de la courbe
     points = list(JALONS_HISTORIQUES)
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
@@ -171,7 +170,6 @@ def generer_carte_visuelle(
 
     points.sort(key=lambda x: x[0])
     
-    # Dédoublonnage par timestamp pour éviter les artefacts de lissage Chart.js
     unique_points = {}
     for dt, val in points:
         unique_points[int(dt.timestamp() * 1000)] = val
@@ -188,14 +186,12 @@ def generer_carte_visuelle(
             "isLast": (i == len(sorted_ts) - 1)
         })
 
-    # 2. Calculs de la barre de progression
     gain_tranche = adherents - cap_precedent
     total_tranche = prochain_cap - cap_precedent
     pct = min(100.0, max(0.0, (gain_tranche / total_tranche) * 100))
     pct_int = int(pct)
     reste = prochain_cap - adherents
 
-    # 3. Template HTML + CSS + Chart.js
     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -293,16 +289,37 @@ def generer_carte_visuelle(
     color: #0284C7;
   }}
 
+  .right-header {{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+  }}
+
+  .handle-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #0F172A;
+    color: #FFFFFF;
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  }}
+
   .kpi-group {{
     display: flex;
-    gap: 16px;
+    gap: 14px;
   }}
   .kpi-card {{
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid #E2E8F0;
     border-radius: 16px;
-    padding: 16px 26px;
-    min-width: 175px;
+    padding: 14px 22px;
+    min-width: 160px;
     box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05);
   }}
   .kpi-label {{
@@ -311,10 +328,10 @@ def generer_carte_visuelle(
     color: #64748B;
     letter-spacing: 0.8px;
     text-transform: uppercase;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }}
   .kpi-val {{
-    font-size: 30px;
+    font-size: 28px;
     font-weight: 900;
     letter-spacing: -0.8px;
   }}
@@ -389,14 +406,6 @@ def generer_carte_visuelle(
     font-weight: 600;
     padding-top: 2px;
   }}
-  .footer-handle {{
-    font-weight: 800;
-    color: #0F172A;
-    background: #E2E8F0;
-    padding: 4px 12px;
-    border-radius: 999px;
-    font-size: 12.5px;
-  }}
 </style>
 </head>
 <body>
@@ -415,8 +424,7 @@ def generer_carte_visuelle(
             <div class="b-white"></div>
             <div class="b-red"></div>
           </div>
-          <span class="title-main">NOUVELLE ÉNERGIE</span>
-          <span class="title-sub">· BAROMÈTRE D'ADHÉSION</span>
+          <span class="title-main">BAROMÈTRE D'ADHÉSION</span>
         </div>
         <div class="hero-number">
           <span class="total-val">{formater_nombre(adherents)}</span>
@@ -424,14 +432,17 @@ def generer_carte_visuelle(
         </div>
       </div>
 
-      <div class="kpi-group">
-        <div class="kpi-card">
-          <div class="kpi-label">Dernières 24h</div>
-          <div class="kpi-val val-24h">+{formater_nombre(gain_24h)}</div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Sur 7 jours</div>
-          <div class="kpi-val val-7j">+{formater_nombre(gain_7j)}</div>
+      <div class="right-header">
+        <div class="handle-badge">@CompteurNE</div>
+        <div class="kpi-group">
+          <div class="kpi-card">
+            <div class="kpi-label">Dernières 24h</div>
+            <div class="kpi-val val-24h">+{formater_nombre(gain_24h)}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Sur 7 jours</div>
+            <div class="kpi-val val-7j">+{formater_nombre(gain_7j)}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -455,8 +466,8 @@ def generer_carte_visuelle(
     </div>
 
     <div class="footer">
-      <div>Source : Données publiques adhérents · unenouvelleenergie.fr</div>
-      <div class="footer-handle">@CompteurNE</div>
+      <div>Données publiques non-officielles · Source : unenouvelleenergie.fr</div>
+      <div>Actualisé automatiquement</div>
     </div>
   </div>
 
@@ -553,6 +564,16 @@ def generer_carte_visuelle(
   </script>
 </body>
 </html>"""
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(
+            viewport={"width": 1200, "height": 675},
+            device_scale_factor=2
+        )
+        page.set_content(html_content, wait_until="networkidle")
+        page.screenshot(path=output_path)
+        browser.close()
 
     # 4. Capture HD via Playwright
     with sync_playwright() as p:
