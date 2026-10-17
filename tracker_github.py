@@ -8,6 +8,7 @@ import json
 import os
 import smtplib
 import sys
+import time
 import requests
 from playwright.sync_api import sync_playwright
 import tweepy
@@ -114,9 +115,21 @@ def calculer_momentum(gain_24h: int, gain_7j: int):
     return "⚪ Données en cours d'acquisition", moyenne_jour, "DYNAMIQUE SUR 7 JOURS"
 
 def extraire_donnees():
-    headers = {"User-Agent": "Mozilla/5.0"}
+    # Génération d'un horodatage pour bloquer le cache Cloudflare
+    timestamp = int(time.time())
+    url_live_nocache = f"{URL_LIVE}?_nocache={timestamp}"
+    url_histo_nocache = f"{URL_HISTO}?_nocache={timestamp}"
+
+    # En-têtes stricts anti-cache
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+
     try:
-        resp_live = requests.get(URL_LIVE, headers=headers, timeout=10)
+        resp_live = requests.get(url_live_nocache, headers=headers, timeout=10)
         resp_live.raise_for_status()
         data_live = resp_live.json()
         adherents = data_live.get("adherents")
@@ -127,7 +140,7 @@ def extraire_donnees():
         except (ValueError, TypeError, AttributeError):
             date_maj = datetime.now(timezone.utc)
 
-        resp_histo = requests.get(URL_HISTO, headers=headers, timeout=10)
+        resp_histo = requests.get(url_histo_nocache, headers=headers, timeout=10)
         resp_histo.raise_for_status()
         jours = resp_histo.json().get("jours", [])
 
@@ -835,7 +848,7 @@ def publier_sur_x(texte: str, image_path: str):
         return
 
     try:
-        # OAuth 1.0a pour l'upload média (v1.1)
+        # OAuth 1.0a pour l'authentification et l'upload média (v1.1)
         auth = tweepy.OAuth1UserHandler(
             consumer_key=X_API_KEY,
             consumer_secret=X_API_SECRET,
@@ -844,7 +857,6 @@ def publier_sur_x(texte: str, image_path: str):
         )
         api_v1 = tweepy.API(auth)
         
-        # Test de vérification d'authentification (optionnel mais clair pour le debug)
         print("Vérification des identifiants auprès de X...", flush=True)
         user = api_v1.verify_credentials()
         print(f"Connecté en tant que : @{user.screen_name}", flush=True)
@@ -853,26 +865,16 @@ def publier_sur_x(texte: str, image_path: str):
         media = api_v1.media_upload(filename=image_path)
         media_id = media.media_id_string
         print(f"✅ Image téléversée sur X (Media ID : {media_id})", flush=True)
+        
+        # Publication du tweet en v1.1 pour éviter l'erreur 402 "Payment Required"
+        print("Publication du tweet via v1.1...", flush=True)
+        status = api_v1.update_status(status=texte, media_ids=[media_id])
+        print(f"🎉 Tweet envoyé avec succès ! ID: {status.id}", flush=True)
+        
     except tweepy.TweepyException as e:
-        print(f"❌ Erreur lors de l'upload du média : {e}", flush=True)
-        return
+        print(f"❌ Erreur Tweepy : {e}", flush=True)
     except Exception as e:
-        print(f"❌ Erreur inattendue : {e}", flush=True)
-        return
-
-    try:
-        # Publication du tweet via l'API v2
-        client_v2 = tweepy.Client(
-            consumer_key=X_API_KEY,
-            consumer_secret=X_API_SECRET,
-            access_token=X_ACCESS_TOKEN,
-            access_token_secret=X_ACCESS_TOKEN_SECRET
-        )
-        rep = client_v2.create_tweet(text=texte, media_ids=[media_id])
-        tweet_id = rep.data.get("id")
-        print(f"🎉 Tweet envoyé avec succès ! ID: {tweet_id}", flush=True)
-    except Exception as e:
-        print(f"❌ Erreur lors de la publication du tweet v2 : {e}", flush=True)
+        print(f"❌ Erreur inattendue lors de la publication : {e}", flush=True)
 
 def envoyer_email(sujet: str, contenu: str, image_path: str):
     msg = MIMEMultipart()
