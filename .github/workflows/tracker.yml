@@ -2,7 +2,7 @@ name: Tracker & Alerte Mail
 
 on:
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Étape indispensable pour permettre à Playwright d'éditer/capturer la carte d'adhésion via Chromium
       - name: Installer Playwright et ses dependances systeme
         run: |
           playwright install --with-deps chromium
@@ -36,6 +35,10 @@ jobs:
           EA_SESSION: ${{ secrets.EA_SESSION }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASS: ${{ secrets.GMAIL_APP_PASS }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: python -u tracker_github.py
 
       - name: Sauvegarder les donnees
