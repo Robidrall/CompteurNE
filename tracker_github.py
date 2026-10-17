@@ -29,11 +29,11 @@ SMTP_USER = os.getenv("GMAIL_USER")
 SMTP_PASS = os.getenv("GMAIL_APP_PASS")
 DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
 
-# Identifiants X (Twitter)
-X_API_KEY = os.getenv("X_API_KEY")
-X_API_SECRET = os.getenv("X_API_SECRET")
-X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
-X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
+# Identifiants X (Twitter) avec nettoyage automatique des espaces accidentels
+X_API_KEY = os.getenv("X_API_KEY", "").strip()
+X_API_SECRET = os.getenv("X_API_SECRET", "").strip()
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "").strip()
+X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "").strip()
 
 MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", 
            "juil.", "août", "sept.", "oct.", "nov.", "déc."]
@@ -835,18 +835,33 @@ def publier_sur_x(texte: str, image_path: str):
         return
 
     try:
+        # OAuth 1.0a pour l'upload média (v1.1)
         auth = tweepy.OAuth1UserHandler(
-            X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
+            consumer_key=X_API_KEY,
+            consumer_secret=X_API_SECRET,
+            access_token=X_ACCESS_TOKEN,
+            access_token_secret=X_ACCESS_TOKEN_SECRET
         )
         api_v1 = tweepy.API(auth)
+        
+        # Test de vérification d'authentification (optionnel mais clair pour le debug)
+        print("Vérification des identifiants auprès de X...", flush=True)
+        user = api_v1.verify_credentials()
+        print(f"Connecté en tant que : @{user.screen_name}", flush=True)
+
+        print("Téléversement de l'image...", flush=True)
         media = api_v1.media_upload(filename=image_path)
         media_id = media.media_id_string
         print(f"✅ Image téléversée sur X (Media ID : {media_id})", flush=True)
-    except Exception as e:
+    except tweepy.TweepyException as e:
         print(f"❌ Erreur lors de l'upload du média : {e}", flush=True)
+        return
+    except Exception as e:
+        print(f"❌ Erreur inattendue : {e}", flush=True)
         return
 
     try:
+        # Publication du tweet via l'API v2
         client_v2 = tweepy.Client(
             consumer_key=X_API_KEY,
             consumer_secret=X_API_SECRET,
