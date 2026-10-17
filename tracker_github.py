@@ -13,12 +13,10 @@ from playwright.sync_api import sync_playwright
 import tweepy
 
 # --- Paramètres généraux ---
-PAS_PALIER = 1       # Alerte tous les 25 nouveaux adhérents
-PAS_CAP = 100000       # Le nouvel objectif officiel est fixé à 100 000
-SEUIL_HEURES = 2       # Notification récurrente max
+PAS_CAP = 100000       # Objectif officiel fixé à 100 000
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
 
-# Nouvelles API ouvertes
+# API ouvertes
 URL_LIVE = "https://adherent.unenouvelleenergie.fr/donnees/adherents.json"
 URL_HISTO = "https://adherent.unenouvelleenergie.fr/donnees/adherents/historique.json"
 
@@ -26,11 +24,12 @@ CSV_FILE = "data/adherents.csv"
 STATE_FILE = "data/last_alert.json"
 CHART_FILE = "data/stats_card.png"
 
+# Identifiants Email
 SMTP_USER = os.getenv("GMAIL_USER")
 SMTP_PASS = os.getenv("GMAIL_APP_PASS")
 DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
 
-# Vos identifiants X developer
+# Identifiants X (Twitter)
 X_API_KEY = os.getenv("X_API_KEY")
 X_API_SECRET = os.getenv("X_API_SECRET")
 X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
@@ -39,7 +38,6 @@ X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
 MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", 
            "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
-# Date de départ du graphique (1er septembre / fin août)
 DATE_DEBUT_GRAPHE = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
 
 JALONS_HISTORIQUES = [
@@ -48,7 +46,6 @@ JALONS_HISTORIQUES = [
     (datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc), 34651),
 ]
 
-# Heure de Paris (UTC+2 en été, UTC+1 en hiver)
 TZ_FR = timezone(timedelta(hours=2))
 
 def formater_nombre(n: int) -> str:
@@ -177,36 +174,22 @@ def lire_etat():
             pass
     return None
 
-def ecrire_etat(iso_date, adherents, dernier_palier):
+def ecrire_etat(iso_date, adherents):
     os.makedirs("data", exist_ok=True)
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "timestamp": iso_date,
-            "adherents": adherents,
-            "dernier_palier": dernier_palier
+            "adherents": adherents
         }, f, indent=2)
 
 def filtrer_et_lisser_points(points: list) -> list:
-    """
-    Algorithme de lissage avancé et robuste : 
-    1. Écarte les variations anormales de court terme en appliquant un filtre 
-       médian de taille 5 (très puissant pour supprimer les pics/outliers isolés).
-    2. Force la courbe à être monotone et croissante (un nombre d'adhérents 
-       historique ne peut pas redescendre d'un coup).
-    """
     if len(points) < 5:
         return points
 
     n = len(points)
-    valeurs_lissees = []
-    
-    # On garde les deux premiers points intacts
-    valeurs_lissees.append(points[0][1])
-    valeurs_lissees.append(points[1][1])
+    valeurs_lissees = [points[0][1], points[1][1]]
 
-    # 1. Filtre médian glissant sur une fenêtre de 5 points
     for i in range(2, n - 2):
-        # On extrait les valeurs de la fenêtre
         fenetre = [
             points[i-2][1],
             points[i-1][1],
@@ -214,32 +197,21 @@ def filtrer_et_lisser_points(points: list) -> list:
             points[i+1][1],
             points[i+2][1]
         ]
-        # La médiane élimine totalement un pic ou creux isolé au milieu de valeurs stables
-        mediane = sorted(fenetre)[2]
-        valeurs_lissees.append(mediane)
+        valeurs_lissees.append(sorted(fenetre)[2])
 
-    # On garde les deux derniers points intacts
     valeurs_lissees.append(points[-2][1])
     valeurs_lissees.append(points[-1][1])
 
-    # 2. Post-traitement : Forcer la croissance monotone pour éliminer les rechutes
     points_lisses = []
     max_rencontre = valeurs_lissees[0]
-    
     for i in range(n):
         dt, _ = points[i]
-        val_lisse = valeurs_lissees[i]
-        
-        # Pour éviter les baisses (qui n'arrivent jamais naturellement),
-        # on s'assure que la valeur ne descend jamais en dessous du maximum historique enregistré
-        if val_lisse < max_rencontre:
-            # On bride temporairement au dernier maximum pour "aplatir" la descente anormale
-            # au lieu de laisser un pic
-            val_lisse = max_rencontre
+        val = valeurs_lissees[i]
+        if val < max_rencontre:
+            val = max_rencontre
         else:
-            max_rencontre = val_lisse
-            
-        points_lisses.append((dt, val_lisse))
+            max_rencontre = val
+        points_lisses.append((dt, val))
 
     return points_lisses
 
@@ -270,10 +242,8 @@ def generer_carte_visuelle(
                     continue
 
     points.sort(key=lambda x: x[0])
-    
-    # Algorithme de lissage avancé
     points = filtrer_et_lisser_points(points)
-    
+
     unique_points = {}
     for dt, val in points:
         unique_points[int(dt.timestamp() * 1000)] = val
@@ -295,9 +265,6 @@ def generer_carte_visuelle(
 
     dt_fr = maintenant.astimezone(TZ_FR)
     date_header = f"{dt_fr.day} {MOIS_FR[dt_fr.month].upper()} {dt_fr.year}"
-
-    # On fixe l'échelle max à 100k
-    suggested_max_y = 100000
 
     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -391,9 +358,7 @@ def generer_carte_visuelle(
     box-shadow: 0 0 0 5px rgba(237, 41, 57, 0.22);
   }}
 
-  .hero-block {{
-    margin-top: 6px;
-  }}
+  .hero-block {{ margin-top: 6px; }}
   .total-val {{
     font-size: 134px;
     font-weight: 900;
@@ -754,9 +719,7 @@ def generer_carte_visuelle(
         scales: {{
           x: {{
             type: 'time',
-            time: {{
-              unit: 'day'
-            }},
+            time: {{ unit: 'day' }},
             grid: {{ display: false }},
             border: {{ color: '#94A3B8', width: 2 }},
             ticks: {{
@@ -774,7 +737,7 @@ def generer_carte_visuelle(
           y: {{
             position: 'right',
             min: 24000,
-            max: {suggested_max_y},
+            max: 100000,
             border: {{ display: false }},
             grid: {{
               color: 'rgba(148, 163, 184, 0.40)',
@@ -855,82 +818,48 @@ def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: st
     adh_estimes_cible = y1 + ratio * (y2 - y1)
     return int(round(adherents_actuels - adh_estimes_cible))
 
-def publier_sur_x(texte, image_path):
-    """
-    Version de diagnostic : tente de publier et affiche l'étape exacte et l'erreur précise
-    renvoyée par X (Twitter) en cas d'échec.
-    """
-    print("\n--- Diagnostic de publication sur X ---", flush=True)
-    
-    # 1. Vérification des variables d'environnement
+def publier_sur_x(texte: str, image_path: str):
+    print("\n--- Début de la publication sur X ---", flush=True)
     cles_manquantes = []
     if not X_API_KEY: cles_manquantes.append("X_API_KEY")
     if not X_API_SECRET: cles_manquantes.append("X_API_SECRET")
     if not X_ACCESS_TOKEN: cles_manquantes.append("X_ACCESS_TOKEN")
     if not X_ACCESS_TOKEN_SECRET: cles_manquantes.append("X_ACCESS_TOKEN_SECRET")
-    
+
     if cles_manquantes:
-        print(f"❌ ERREUR : Clés d'API manquantes dans l'environnement : {', '.join(cles_manquantes)}", flush=True)
-        print("💡 Solution : Assurez-vous d'avoir bien fait 'export X_API_KEY=...' ou de les avoir définies dans vos secrets.", flush=True)
+        print(f"❌ Clés manquantes : {', '.join(cles_manquantes)}", flush=True)
         return
 
-    # 2. Vérification de l'image
     if not os.path.exists(image_path):
-        print(f"❌ ERREUR : Le fichier image n'existe pas au chemin : '{image_path}'", flush=True)
+        print(f"❌ Fichier image introuvable : {image_path}", flush=True)
         return
-    else:
-        taille_ko = os.path.getsize(image_path) / 1024
-        print(f"✅ Image trouvée : '{image_path}' ({taille_ko:.1f} Ko)", flush=True)
 
-    # 3. Authentification et Upload du média (v1.1)
-    media_id = None
     try:
-        print("1. Connexion pour l'upload d'image (OAuth 1.0a)...", flush=True)
         auth = tweepy.OAuth1UserHandler(
             X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
         )
         api_v1 = tweepy.API(auth)
-        
-        print("2. Envoi de l'image à X...", flush=True)
         media = api_v1.media_upload(filename=image_path)
         media_id = media.media_id_string
-        print(f"✅ Image uploadée avec succès sur X ! Media ID : {media_id}", flush=True)
-    except tweepy.TweepyException as e:
-        print("❌ ÉCHEC de l'envoi de l'image (Etape 1.1) !", flush=True)
-        print(f"Détail de l'erreur Tweepy : {e}", flush=True)
-        print("💡 Conseil : Cela indique souvent que vos 4 clés ne correspondent pas, ou que l'accès n'est pas autorisé OAuth 1.0a.", flush=True)
-        return
+        print(f"✅ Image téléversée sur X (Media ID : {media_id})", flush=True)
     except Exception as e:
-        print(f"❌ Erreur imprévue lors de l'upload : {e}", flush=True)
+        print(f"❌ Erreur lors de l'upload du média : {e}", flush=True)
         return
 
-    # 4. Publication du Tweet (v2)
     try:
-        print("3. Connexion pour publier le tweet (OAuth 2.0)...", flush=True)
         client_v2 = tweepy.Client(
             consumer_key=X_API_KEY,
             consumer_secret=X_API_SECRET,
             access_token=X_ACCESS_TOKEN,
             access_token_secret=X_ACCESS_TOKEN_SECRET
         )
-
-        print("4. Envoi du Tweet avec le texte et l'image...", flush=True)
-        reponse = client_v2.create_tweet(text=texte, media_ids=[media_id])
-        
-        tweet_id = reponse.data.get('id')
-        print(f"🎉 SUCCÈS ! Tweet publié avec l'ID : {tweet_id}", flush=True)
-        print(f"Visualiser le tweet : https://twitter.com/user/status/{tweet_id}", flush=True)
-    except tweepy.TweepyException as e:
-        print("❌ ÉCHEC de la publication du Tweet (Etape v2) !", flush=True)
-        print(f"Détail de l'erreur Tweepy : {e}", flush=True)
-        print("💡 Conseil : Si l'image a fonctionné mais pas le tweet, c'est presque TOUJOURS un problème de permission de votre App sur X (elle doit être en 'Read and Write').", flush=True)
-        print("➡️ Allez dans 'User authentication settings' de votre application, vérifiez que 'Read and Write' est sélectionné, puis RE-GÉNÉREZ impérativement le Access Token & Secret.", flush=True)
+        rep = client_v2.create_tweet(text=texte, media_ids=[media_id])
+        tweet_id = rep.data.get("id")
+        print(f"🎉 Tweet envoyé avec succès ! ID: {tweet_id}", flush=True)
     except Exception as e:
-        print(f"❌ Erreur imprévue lors de la publication : {e}", flush=True)
-    
-    print("---------------------------------------\n", flush=True)
+        print(f"❌ Erreur lors de la publication du tweet v2 : {e}", flush=True)
 
-def envoyer_email(sujet, contenu, image_path):
+def envoyer_email(sujet: str, contenu: str, image_path: str):
     msg = MIMEMultipart()
     msg["Subject"] = sujet
     msg["From"] = SMTP_USER
@@ -970,94 +899,67 @@ def run():
     cadence_txt, cadence_kpi = calculer_cadence_recente(CSV_FILE)
     momentum_txt, moyenne_jour_7j, badge_momentum = calculer_momentum(gain_24h, gain_7j)
 
-    palier_actuel = (adherents // PAS_PALIER) * PAS_PALIER
-    etat = lire_etat()
+    cap_precedent = 60000 if adherents >= 60000 else (adherents // 5000) * 5000
+    prochain_cap = PAS_CAP
+    reste_avant_cap = prochain_cap - adherents
 
-    if etat is None:
-        ecrire_etat(maintenant_iso, adherents, palier_actuel)
-        print(f"État initialisé à {adherents} (palier : {palier_actuel}).", flush=True)
-        return
+    jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
 
-    dernier_total = etat.get("adherents", adherents)
-    derniere_date = datetime.fromisoformat(etat["timestamp"])
-    dernier_palier = etat.get("dernier_palier", (dernier_total // PAS_PALIER) * PAS_PALIER)
+    if moyenne_jour_7j > 0:
+        jours_restants = reste_avant_cap / moyenne_jour_7j
+        eta_date = maintenant + timedelta(days=jours_restants)
+        eta_texte = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]} {eta_date.year}"
+        eta_court = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]}"
+    else:
+        eta_texte = "Indéterminée"
+        eta_court = "—"
 
-    delta_heures = (maintenant - derniere_date).total_seconds() / 3600
-    doit_notifier = False
-    titre_sujet = ""
-
-    franchissement_5k = (adherents // PAS_CAP) > (dernier_total // PAS_CAP)
-    palier_5k_franchi = (adherents // PAS_CAP) * PAS_CAP
-
-    if franchissement_5k:
-        doit_notifier = True
-        titre_sujet = f"🚀 CAP DES {formater_nombre(palier_5k_franchi)} ADHÉRENTS FRANCHI !"
-        dernier_palier = palier_actuel
-    elif palier_actuel > dernier_palier:
-        doit_notifier = True
-        titre_sujet = f"⚡ +{PAS_PALIER} adhérents ({formater_nombre(adherents)})"
-        dernier_palier = palier_actuel
-    elif delta_heures >= SEUIL_HEURES:
-        doit_notifier = True
+    # Titre dynamique de l'e-mail
+    if adherents >= prochain_cap:
+        titre_sujet = f"🚀 CAP DES {formater_nombre(prochain_cap)} ADHÉRENTS FRANCHI !"
+    else:
         titre_sujet = f"📊 Baromètre : {formater_nombre(adherents)} adhérents"
 
-    if doit_notifier:
-        cap_precedent = 60000 if adherents >= 60000 else (adherents // 5000) * 5000
-        prochain_cap = 100000
-        reste_avant_cap = prochain_cap - adherents
+    tweet_texte = (
+        f"📊 @nouv_energie · Baromètre\n\n"
+        f"👥 {formater_nombre(adherents)} adhérents\n\n"
+        f"⚡ {cadence_txt}\n"
+        f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n"
+        f"{momentum_txt}\n\n"
+        f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
+        f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
+        f"▫️ Projection : {eta_texte}"
+    )
 
-        jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
+    generer_carte_visuelle(
+        adherents=adherents,
+        gain_24h=gain_24h,
+        gain_7j=gain_7j,
+        cadence_kpi=cadence_kpi,
+        badge_momentum=badge_momentum,
+        cap_precedent=cap_precedent,
+        prochain_cap=prochain_cap,
+        eta_court=eta_court,
+        maintenant=maintenant,
+        points_api=points_api,
+        output_path=CHART_FILE,
+    )
 
-        if moyenne_jour_7j > 0:
-            jours_restants = reste_avant_cap / moyenne_jour_7j
-            eta_date = maintenant + timedelta(days=jours_restants)
-            eta_texte = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]} {eta_date.year}"
-            eta_court = f"~{int(eta_date.day)} {MOIS_FR[eta_date.month]}"
-        else:
-            eta_texte = "Indéterminée"
-            eta_court = "—"
+    email_corps = (
+        f"Bonjour,\n\n"
+        f"Nouveau point d'étape disponible. Le visuel est en pièce jointe :\n"
+        f"- stats_card.png (Baromètre)\n\n"
+        f"===================================================\n"
+        f"--- TWEET ---\n"
+        f"===================================================\n"
+        f"{tweet_texte}\n\n"
+        f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
+    )
 
-        tweet_texte = (
-            f"📊 @nouv_energie · Baromètre\n\n"
-            f"👥 {formater_nombre(adherents)} adhérents\n\n"
-            f"⚡ {cadence_txt}\n"
-            f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n"
-            f"{momentum_txt}\n\n"
-            f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
-            f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
-            f"▫️ Projection : {eta_texte}"
-        )
-
-        generer_carte_visuelle(
-            adherents=adherents,
-            gain_24h=gain_24h,
-            gain_7j=gain_7j,
-            cadence_kpi=cadence_kpi,
-            badge_momentum=badge_momentum,
-            cap_precedent=cap_precedent,
-            prochain_cap=prochain_cap,
-            eta_court=eta_court,
-            maintenant=maintenant,
-            points_api=points_api,
-            output_path=CHART_FILE,
-        )
-
-        email_corps = (
-            f"Bonjour,\n\n"
-            f"Nouveau point d'étape disponible. Le visuel est en pièce jointe :\n"
-            f"- stats_card.png (Baromètre)\n\n"
-            f"===================================================\n"
-            f"--- TWEET ---\n"
-            f"===================================================\n"
-            f"{tweet_texte}\n\n"
-            f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
-        )
-
-        envoyer_email(titre_sujet, email_corps, CHART_FILE)
-        publier_sur_x(tweet_texte, CHART_FILE)
-        ecrire_etat(maintenant_iso, adherents, dernier_palier)
-    else:
-        print(f"Pas d'alerte requise ({adherents} adhérents).", flush=True)
+    # Exécution inconditionnelle
+    envoyer_email(titre_sujet, email_corps, CHART_FILE)
+    publier_sur_x(tweet_texte, CHART_FILE)
+    ecrire_etat(maintenant_iso, adherents)
 
 if __name__ == "__main__":
     run()
