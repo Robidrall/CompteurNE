@@ -857,21 +857,56 @@ def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: st
 
 def publier_sur_x(texte, image_path):
     """
-    Publie automatiquement le tweet sur X avec le visuel généré.
-    Fonctionne avec l'accès gratuit (Free Tier) via tweepy.
+    Version de diagnostic : tente de publier et affiche l'étape exacte et l'erreur précise
+    renvoyée par X (Twitter) en cas d'échec.
     """
-    if not all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
-        print("Erreur : identifiants X manquants.", flush=True)
+    print("\n--- Diagnostic de publication sur X ---", flush=True)
+    
+    # 1. Vérification des variables d'environnement
+    cles_manquantes = []
+    if not X_API_KEY: cles_manquantes.append("X_API_KEY")
+    if not X_API_SECRET: cles_manquantes.append("X_API_SECRET")
+    if not X_ACCESS_TOKEN: cles_manquantes.append("X_ACCESS_TOKEN")
+    if not X_ACCESS_TOKEN_SECRET: cles_manquantes.append("X_ACCESS_TOKEN_SECRET")
+    
+    if cles_manquantes:
+        print(f"❌ ERREUR : Clés d'API manquantes dans l'environnement : {', '.join(cles_manquantes)}", flush=True)
+        print("💡 Solution : Assurez-vous d'avoir bien fait 'export X_API_KEY=...' ou de les avoir définies dans vos secrets.", flush=True)
         return
 
+    # 2. Vérification de l'image
+    if not os.path.exists(image_path):
+        print(f"❌ ERREUR : Le fichier image n'existe pas au chemin : '{image_path}'", flush=True)
+        return
+    else:
+        taille_ko = os.path.getsize(image_path) / 1024
+        print(f"✅ Image trouvée : '{image_path}' ({taille_ko:.1f} Ko)", flush=True)
+
+    # 3. Authentification et Upload du média (v1.1)
+    media_id = None
     try:
-        # 1. Authentification OAuth 1.0a pour l'upload du média (v1.1)
+        print("1. Connexion pour l'upload d'image (OAuth 1.0a)...", flush=True)
         auth = tweepy.OAuth1UserHandler(
             X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
         )
         api_v1 = tweepy.API(auth)
         
-        # 2. Authentification OAuth 2.0 / Client v2 pour le tweet (gratuit)
+        print("2. Envoi de l'image à X...", flush=True)
+        media = api_v1.media_upload(filename=image_path)
+        media_id = media.media_id_string
+        print(f"✅ Image uploadée avec succès sur X ! Media ID : {media_id}", flush=True)
+    except tweepy.TweepyException as e:
+        print("❌ ÉCHEC de l'envoi de l'image (Etape 1.1) !", flush=True)
+        print(f"Détail de l'erreur Tweepy : {e}", flush=True)
+        print("💡 Conseil : Cela indique souvent que vos 4 clés ne correspondent pas, ou que l'accès n'est pas autorisé OAuth 1.0a.", flush=True)
+        return
+    except Exception as e:
+        print(f"❌ Erreur imprévue lors de l'upload : {e}", flush=True)
+        return
+
+    # 4. Publication du Tweet (v2)
+    try:
+        print("3. Connexion pour publier le tweet (OAuth 2.0)...", flush=True)
         client_v2 = tweepy.Client(
             consumer_key=X_API_KEY,
             consumer_secret=X_API_SECRET,
@@ -879,19 +914,21 @@ def publier_sur_x(texte, image_path):
             access_token_secret=X_ACCESS_TOKEN_SECRET
         )
 
-        print("Envoi de l'image à X...", flush=True)
-        # Upload de l'image (limité mais autorisé de façon gratuite en v1.1 par X)
-        media = api_v1.media_upload(filename=image_path)
-        media_id = media.media_id_string
-
-        print("Publication du Tweet...", flush=True)
-        # Publication du post en V2 avec l'id média
+        print("4. Envoi du Tweet avec le texte et l'image...", flush=True)
         reponse = client_v2.create_tweet(text=texte, media_ids=[media_id])
         
         tweet_id = reponse.data.get('id')
-        print(f"Tweet publié avec succès ! ID: {tweet_id}", flush=True)
+        print(f"🎉 SUCCÈS ! Tweet publié avec l'ID : {tweet_id}", flush=True)
+        print(f"Visualiser le tweet : https://twitter.com/user/status/{tweet_id}", flush=True)
+    except tweepy.TweepyException as e:
+        print("❌ ÉCHEC de la publication du Tweet (Etape v2) !", flush=True)
+        print(f"Détail de l'erreur Tweepy : {e}", flush=True)
+        print("💡 Conseil : Si l'image a fonctionné mais pas le tweet, c'est presque TOUJOURS un problème de permission de votre App sur X (elle doit être en 'Read and Write').", flush=True)
+        print("➡️ Allez dans 'User authentication settings' de votre application, vérifiez que 'Read and Write' est sélectionné, puis RE-GÉNÉREZ impérativement le Access Token & Secret.", flush=True)
     except Exception as e:
-        print(f"Erreur lors de la publication sur X : {e}", flush=True)
+        print(f"❌ Erreur imprévue lors de la publication : {e}", flush=True)
+    
+    print("---------------------------------------\n", flush=True)
 
 def envoyer_email(sujet, contenu, image_path):
     msg = MIMEMultipart()
