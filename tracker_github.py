@@ -944,7 +944,8 @@ def run():
         f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n\n"
         f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
         f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
-        f"▫️ Projection : {eta_texte}"
+        f"▫️ Projection : {eta_texte}\n"
+        f" Pour adhérer : https://soutenir.unenouvelleenergie.fr/p/SZZQKUQB"
     )
 
     generer_carte_visuelle(
