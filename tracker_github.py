@@ -10,10 +10,10 @@ import smtplib
 import sys
 import requests
 from playwright.sync_api import sync_playwright
-import tweepy # NOUVEL IMPORT
+import tweepy
 
 # --- Paramètres généraux ---
-PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
+PAS_PALIER = 1       # Alerte tous les 25 nouveaux adhérents
 PAS_CAP = 100000       # Le nouvel objectif officiel est fixé à 100 000
 SEUIL_HEURES = 2       # Notification récurrente max
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
@@ -187,30 +187,61 @@ def ecrire_etat(iso_date, adherents, dernier_palier):
         }, f, indent=2)
 
 def filtrer_et_lisser_points(points: list) -> list:
-    if len(points) < 3:
+    """
+    Algorithme de lissage avancé et robuste : 
+    1. Écarte les variations anormales de court terme en appliquant un filtre 
+       médian de taille 5 (très puissant pour supprimer les pics/outliers isolés).
+    2. Force la courbe à être monotone et croissante (un nombre d'adhérents 
+       historique ne peut pas redescendre d'un coup).
+    """
+    if len(points) < 5:
         return points
 
-    points_filtres = []
-    points_filtres.append(points[0])
+    n = len(points)
+    valeurs_lissees = []
+    
+    # On garde les deux premiers points intacts
+    valeurs_lissees.append(points[0][1])
+    valeurs_lissees.append(points[1][1])
 
-    for i in range(1, len(points) - 1):
-        dt_prev, val_prev = points[i-1]
-        dt_curr, val_curr = points[i]
-        dt_next, val_next = points[i+1]
+    # 1. Filtre médian glissant sur une fenêtre de 5 points
+    for i in range(2, n - 2):
+        # On extrait les valeurs de la fenêtre
+        fenetre = [
+            points[i-2][1],
+            points[i-1][1],
+            points[i][1],
+            points[i+1][1],
+            points[i+2][1]
+        ]
+        # La médiane élimine totalement un pic ou creux isolé au milieu de valeurs stables
+        mediane = sorted(fenetre)[2]
+        valeurs_lissees.append(mediane)
 
-        val_moy_voisins = (val_prev + val_next) / 2
+    # On garde les deux derniers points intacts
+    valeurs_lissees.append(points[-2][1])
+    valeurs_lissees.append(points[-1][1])
+
+    # 2. Post-traitement : Forcer la croissance monotone pour éliminer les rechutes
+    points_lisses = []
+    max_rencontre = valeurs_lissees[0]
+    
+    for i in range(n):
+        dt, _ = points[i]
+        val_lisse = valeurs_lissees[i]
         
-        if val_curr > val_prev and val_curr > val_next:
-            seuil_tolerance = val_moy_voisins * 1.05  # 5% d'écart toléré
-            if val_curr > seuil_tolerance:
-                print(f"Correction automatique d'un pic le {dt_curr} ({val_curr} -> {int(val_moy_voisins)})")
-                points_filtres.append((dt_curr, int(val_moy_voisins)))
-                continue
+        # Pour éviter les baisses (qui n'arrivent jamais naturellement),
+        # on s'assure que la valeur ne descend jamais en dessous du maximum historique enregistré
+        if val_lisse < max_rencontre:
+            # On bride temporairement au dernier maximum pour "aplatir" la descente anormale
+            # au lieu de laisser un pic
+            val_lisse = max_rencontre
+        else:
+            max_rencontre = val_lisse
+            
+        points_lisses.append((dt, val_lisse))
 
-        points_filtres.append((dt_curr, val_curr))
-
-    points_filtres.append(points[-1])
-    return points_filtres
+    return points_lisses
 
 def generer_carte_visuelle(
     adherents: int,
@@ -240,7 +271,7 @@ def generer_carte_visuelle(
 
     points.sort(key=lambda x: x[0])
     
-    # Algorithme de lissage automatique
+    # Algorithme de lissage avancé
     points = filtrer_et_lisser_points(points)
     
     unique_points = {}
@@ -824,7 +855,6 @@ def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: st
     adh_estimes_cible = y1 + ratio * (y2 - y1)
     return int(round(adherents_actuels - adh_estimes_cible))
 
-# NOUVELLE FONCTION : publier_sur_x
 def publier_sur_x(texte, image_path):
     """
     Publie automatiquement le tweet sur X avec le visuel généré.
@@ -986,12 +1016,8 @@ def run():
             f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
         )
 
-        # 1. Envoi de l'e-mail de notification
         envoyer_email(titre_sujet, email_corps, CHART_FILE)
-        
-        # 2. ENVOI DU TWEET AUTOMATIQUE (Nouveau)
         publier_sur_x(tweet_texte, CHART_FILE)
-        
         ecrire_etat(maintenant_iso, adherents, dernier_palier)
     else:
         print(f"Pas d'alerte requise ({adherents} adhérents).", flush=True)
