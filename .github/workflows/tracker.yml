@@ -1,9 +1,7 @@
 name: Tracker & Alerte Mail
 
 on:
-  schedule:
-    - cron: '30 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Déclenché exclusivement par le ping API externe (cron-job.org) ou manuellement
 
 permissions:
   contents: write
@@ -12,7 +10,7 @@ jobs:
   track-and-mail:
     runs-on: ubuntu-24.04
     steps:
-      - name: Recuperer le code
+      - name: Récupérer le code
         uses: actions/checkout@v4
 
       - name: Configurer Python
@@ -21,16 +19,16 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Installer les dependances Python
+      - name: Installer les dépendances Python
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Installer Playwright et ses dependances systeme
+      - name: Installer Playwright et ses dépendances système
         run: |
           playwright install --with-deps chromium
 
-      - name: Executer le releve
+      - name: Exécuter le relevé
         env:
           EA_SESSION: ${{ secrets.EA_SESSION }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
@@ -41,7 +39,7 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: python -u tracker_github.py
 
-      - name: Sauvegarder les donnees
+      - name: Sauvegarder les données
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
