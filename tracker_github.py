@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 
 # --- Paramètres généraux ---
 PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
-PAS_CAP = 5000         # Grands caps (35k, 40k, 45k...)
+PAS_CAP = 100000       # Le nouvel objectif officiel est fixé à 100 000
 SEUIL_HEURES = 2       # Notification récurrente max
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
 
@@ -56,11 +56,6 @@ def generer_jauge_texte(actuel: int, palier_bas: int, palier_haut: int, taille: 
     return f"{'▓' * pleins}{'░' * vides} {pct} %"
 
 def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
-    """
-    Retourne un tuple :
-    1. Le texte pour le tweet (h + min, sans la plage horaire 'de Xh à Yh')
-    2. La valeur courte pour la 3e carte KPI du visuel (ex: '~201' ou '~4.5')
-    """
     if not os.path.isfile(csv_file):
         return "Données insuffisantes", "—"
     with open(csv_file, "r", encoding="utf-8") as f:
@@ -87,7 +82,6 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
     adh_par_heure = delta_adh / delta_heures
     adh_par_minute = delta_adh / delta_minutes
 
-    # Formatage du volet horaire
     if adh_par_heure >= 10:
         val_kpi = f"~{formater_nombre(int(round(adh_par_heure)))}"
         txt_heure = f"{val_kpi} adh. / h"
@@ -95,7 +89,6 @@ def calculer_cadence_recente(csv_file: str = CSV_FILE) -> tuple[str, str]:
         val_kpi = f"~{adh_par_heure:.1f}"
         txt_heure = f"{val_kpi} adh. / h"
 
-    # Formatage du volet minute
     if adh_par_minute >= 1.0:
         txt_min = f"~{adh_par_minute:.1f} adh. / min"
     else:
@@ -186,6 +179,37 @@ def ecrire_etat(iso_date, adherents, dernier_palier):
             "dernier_palier": dernier_palier
         }, f, indent=2)
 
+def filtrer_et_lisser_points(points: list) -> list:
+    """
+    Fonction de lissage automatique : parcours la série temporelle et élimine
+    les anomalies / pics isolés (ex: +1500 adherents sur un seul point de l'API
+    suivi d'une rechute).
+    """
+    if len(points) < 3:
+        return points
+
+    points_filtres = []
+    points_filtres.append(points[0])
+
+    for i in range(1, len(points) - 1):
+        dt_prev, val_prev = points[i-1]
+        dt_curr, val_curr = points[i]
+        dt_next, val_next = points[i+1]
+
+        val_moy_voisins = (val_prev + val_next) / 2
+        
+        if val_curr > val_prev and val_curr > val_next:
+            seuil_tolerance = val_moy_voisins * 1.05  # 5% d'écart toléré
+            if val_curr > seuil_tolerance:
+                print(f"Correction automatique d'un pic le {dt_curr} ({val_curr} -> {int(val_moy_voisins)})")
+                points_filtres.append((dt_curr, int(val_moy_voisins)))
+                continue
+
+        points_filtres.append((dt_curr, val_curr))
+
+    points_filtres.append(points[-1])
+    return points_filtres
+
 def generer_carte_visuelle(
     adherents: int,
     gain_24h: int,
@@ -199,13 +223,8 @@ def generer_carte_visuelle(
     points_api: list,
     output_path: str,
 ):
-    """
-    Génère la carte visuelle au format Portrait Mobile 4:5 (1080x1350)
-    depuis le 1er septembre, avec mois en filigrane et grandes polices.
-    """
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    # Fusion des jalons (depuis fin août / 1er sept.) + historique API + CSV local
     points = list(JALONS_HISTORIQUES) + list(points_api)
     if os.path.isfile(CSV_FILE):
         with open(CSV_FILE, "r", encoding="utf-8") as f:
@@ -218,6 +237,9 @@ def generer_carte_visuelle(
                     continue
 
     points.sort(key=lambda x: x[0])
+    
+    # Algorithme de lissage automatique
+    points = filtrer_et_lisser_points(points)
     
     unique_points = {}
     for dt, val in points:
@@ -241,8 +263,8 @@ def generer_carte_visuelle(
     dt_fr = maintenant.astimezone(TZ_FR)
     date_header = f"{dt_fr.day} {MOIS_FR[dt_fr.month].upper()} {dt_fr.year}"
 
-    max_y = max(unique_points.values()) if unique_points else adherents
-    suggested_max_y = ((max_y // 5000) + 1) * 5000
+    # On fixe l'échelle max à 100k
+    suggested_max_y = 100000
 
     html_content = f"""<!DOCTYPE html>
 <html lang="fr">
@@ -268,7 +290,6 @@ def generer_carte_visuelle(
     position: relative;
   }}
 
-  /* Grille de fond subtile */
   body::before {{
     content: "";
     position: absolute;
@@ -303,7 +324,6 @@ def generer_carte_visuelle(
     z-index: 1;
   }}
 
-  /* En-tête */
   .top-row {{
     display: flex;
     justify-content: space-between;
@@ -338,7 +358,6 @@ def generer_carte_visuelle(
     box-shadow: 0 0 0 5px rgba(237, 41, 57, 0.22);
   }}
 
-  /* Chiffre principal géant pour mobile */
   .hero-block {{
     margin-top: 6px;
   }}
@@ -358,7 +377,6 @@ def generer_carte_visuelle(
     margin-top: 10px;
   }}
 
-  /* 3 Cartes KPI pleine largeur */
   .kpi-row {{
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -390,7 +408,6 @@ def generer_carte_visuelle(
     margin-top: 10px;
   }}
 
-  /* Zone Graphique haute pour mobile */
   .chart-wrapper {{
     position: relative;
     height: 470px;
@@ -438,7 +455,6 @@ def generer_carte_visuelle(
     margin-top: 3px;
   }}
 
-  /* Section Progression en bas */
   .progress-section {{
     background: rgba(255, 255, 255, 0.92);
     border: 1.5px solid #CBD5E1;
@@ -494,7 +510,6 @@ def generer_carte_visuelle(
     font-weight: 800;
   }}
 
-  /* Pied de page */
   .footer {{
     display: flex;
     justify-content: space-between;
@@ -584,7 +599,6 @@ def generer_carte_visuelle(
     gradient.addColorStop(0.75, 'rgba(0, 85, 255, 0.06)');
     gradient.addColorStop(1, 'rgba(0, 85, 255, 0.0)');
 
-    // Plugin : Bandes de mois colorées, séparations verticales et nom des mois en grand filigrane
     const monthBandsPlugin = {{
       id: 'monthBandsPlugin',
       beforeDatasetsDraw(chart) {{
@@ -612,13 +626,11 @@ def generer_carte_visuelle(
           const width = xEnd - xStart;
 
           if (width > 0) {{
-            // Alternance de couleurs bien distinctes pour chaque mois
             ctx.fillStyle = (idx % 2 === 0)
               ? 'rgba(226, 232, 240, 0.45)'
               : 'rgba(219, 234, 254, 0.55)';
             ctx.fillRect(xStart, top, width, bottom - top);
 
-            // Séparation verticale au 1er du mois
             if (xStart > left + 10) {{
               ctx.beginPath();
               ctx.setLineDash([7, 6]);
@@ -630,7 +642,6 @@ def generer_carte_visuelle(
               ctx.setLineDash([]);
             }}
 
-            // Nom du mois en grand filigrane
             if (width > 90) {{
               const label = monthsFull[curr.getUTCMonth()];
               ctx.font = '900 34px Inter, sans-serif';
@@ -648,7 +659,6 @@ def generer_carte_visuelle(
       }}
     }};
 
-    // Plugin : Double halo lumineux sur le point actuel
     const haloPlugin = {{
       id: 'haloPlugin',
       afterDatasetsDraw(chart) {{
@@ -731,7 +741,7 @@ def generer_carte_visuelle(
           y: {{
             position: 'right',
             min: 24000,
-            suggestedMax: {suggested_max_y},
+            max: {suggested_max_y},
             border: {{ display: false }},
             grid: {{
               color: 'rgba(148, 163, 184, 0.40)',
@@ -758,14 +768,13 @@ def generer_carte_visuelle(
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(
             viewport={"width": 1080, "height": 1350},
-            device_scale_factor=2  # Qualité Retina Mobile (2160x2700 px)
+            device_scale_factor=2
         )
         page.set_content(html_content, wait_until="networkidle")
         page.screenshot(path=output_path)
         browser.close()
 
 def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: str = CSV_FILE) -> int:
-    """Calcule le gain réel sur 24h glissantes par interpolation linéaire."""
     if not os.path.isfile(csv_file):
         return 0
 
@@ -885,8 +894,9 @@ def run():
         titre_sujet = f"📊 Baromètre : {formater_nombre(adherents)} adhérents"
 
     if doit_notifier:
-        cap_precedent = (adherents // PAS_CAP) * PAS_CAP
-        prochain_cap = cap_precedent + PAS_CAP
+        # Cap précédent fixé par rapport au nouvel objectif de 100 000
+        cap_precedent = 60000 if adherents >= 60000 else (adherents // 5000) * 5000
+        prochain_cap = 100000
         reste_avant_cap = prochain_cap - adherents
 
         jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
