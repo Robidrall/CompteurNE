@@ -10,6 +10,7 @@ import smtplib
 import sys
 import requests
 from playwright.sync_api import sync_playwright
+import tweepy # NOUVEL IMPORT
 
 # --- Paramètres généraux ---
 PAS_PALIER = 25        # Alerte tous les 25 nouveaux adhérents
@@ -28,6 +29,12 @@ CHART_FILE = "data/stats_card.png"
 SMTP_USER = os.getenv("GMAIL_USER")
 SMTP_PASS = os.getenv("GMAIL_APP_PASS")
 DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
+
+# Vos identifiants X developer
+X_API_KEY = os.getenv("X_API_KEY")
+X_API_SECRET = os.getenv("X_API_SECRET")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
+X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
 
 MOIS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", 
            "juil.", "août", "sept.", "oct.", "nov.", "déc."]
@@ -180,11 +187,6 @@ def ecrire_etat(iso_date, adherents, dernier_palier):
         }, f, indent=2)
 
 def filtrer_et_lisser_points(points: list) -> list:
-    """
-    Fonction de lissage automatique : parcours la série temporelle et élimine
-    les anomalies / pics isolés (ex: +1500 adherents sur un seul point de l'API
-    suivi d'une rechute).
-    """
     if len(points) < 3:
         return points
 
@@ -822,6 +824,45 @@ def calculer_gain_24h(maintenant: datetime, adherents_actuels: int, csv_file: st
     adh_estimes_cible = y1 + ratio * (y2 - y1)
     return int(round(adherents_actuels - adh_estimes_cible))
 
+# NOUVELLE FONCTION : publier_sur_x
+def publier_sur_x(texte, image_path):
+    """
+    Publie automatiquement le tweet sur X avec le visuel généré.
+    Fonctionne avec l'accès gratuit (Free Tier) via tweepy.
+    """
+    if not all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]):
+        print("Erreur : identifiants X manquants.", flush=True)
+        return
+
+    try:
+        # 1. Authentification OAuth 1.0a pour l'upload du média (v1.1)
+        auth = tweepy.OAuth1UserHandler(
+            X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET
+        )
+        api_v1 = tweepy.API(auth)
+        
+        # 2. Authentification OAuth 2.0 / Client v2 pour le tweet (gratuit)
+        client_v2 = tweepy.Client(
+            consumer_key=X_API_KEY,
+            consumer_secret=X_API_SECRET,
+            access_token=X_ACCESS_TOKEN,
+            access_token_secret=X_ACCESS_TOKEN_SECRET
+        )
+
+        print("Envoi de l'image à X...", flush=True)
+        # Upload de l'image (limité mais autorisé de façon gratuite en v1.1 par X)
+        media = api_v1.media_upload(filename=image_path)
+        media_id = media.media_id_string
+
+        print("Publication du Tweet...", flush=True)
+        # Publication du post en V2 avec l'id média
+        reponse = client_v2.create_tweet(text=texte, media_ids=[media_id])
+        
+        tweet_id = reponse.data.get('id')
+        print(f"Tweet publié avec succès ! ID: {tweet_id}", flush=True)
+    except Exception as e:
+        print(f"Erreur lors de la publication sur X : {e}", flush=True)
+
 def envoyer_email(sujet, contenu, image_path):
     msg = MIMEMultipart()
     msg["Subject"] = sujet
@@ -894,7 +935,6 @@ def run():
         titre_sujet = f"📊 Baromètre : {formater_nombre(adherents)} adhérents"
 
     if doit_notifier:
-        # Cap précédent fixé par rapport au nouvel objectif de 100 000
         cap_precedent = 60000 if adherents >= 60000 else (adherents // 5000) * 5000
         prochain_cap = 100000
         reste_avant_cap = prochain_cap - adherents
@@ -946,7 +986,12 @@ def run():
             f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
         )
 
+        # 1. Envoi de l'e-mail de notification
         envoyer_email(titre_sujet, email_corps, CHART_FILE)
+        
+        # 2. ENVOI DU TWEET AUTOMATIQUE (Nouveau)
+        publier_sur_x(tweet_texte, CHART_FILE)
+        
         ecrire_etat(maintenant_iso, adherents, dernier_palier)
     else:
         print(f"Pas d'alerte requise ({adherents} adhérents).", flush=True)
