@@ -847,8 +847,8 @@ def publier_sur_x(texte: str, image_path: str):
         print(f"❌ Fichier image introuvable : {image_path}", flush=True)
         return
 
+    # 1. Upload de l'image en v1.1 (Seule méthode autorisée pour les médias)
     try:
-        # OAuth 1.0a pour l'authentification et l'upload média (v1.1)
         auth = tweepy.OAuth1UserHandler(
             consumer_key=X_API_KEY,
             consumer_secret=X_API_SECRET,
@@ -857,24 +857,32 @@ def publier_sur_x(texte: str, image_path: str):
         )
         api_v1 = tweepy.API(auth)
         
-        print("Vérification des identifiants auprès de X...", flush=True)
-        user = api_v1.verify_credentials()
-        print(f"Connecté en tant que : @{user.screen_name}", flush=True)
-
         print("Téléversement de l'image...", flush=True)
         media = api_v1.media_upload(filename=image_path)
         media_id = media.media_id_string
         print(f"✅ Image téléversée sur X (Media ID : {media_id})", flush=True)
         
-        # Publication du tweet en v1.1 pour éviter l'erreur 402 "Payment Required"
-        print("Publication du tweet via v1.1...", flush=True)
-        status = api_v1.update_status(status=texte, media_ids=[media_id])
-        print(f"🎉 Tweet envoyé avec succès ! ID: {status.id}", flush=True)
+    except tweepy.TweepyException as e:
+        print(f"❌ Erreur lors de l'upload du média : {e}", flush=True)
+        return
+
+    # 2. Publication du tweet en v2 (Obligatoire, nécessite un solde positif sur X Developer)
+    try:
+        client_v2 = tweepy.Client(
+            consumer_key=X_API_KEY,
+            consumer_secret=X_API_SECRET,
+            access_token=X_ACCESS_TOKEN,
+            access_token_secret=X_ACCESS_TOKEN_SECRET
+        )
+        
+        print("Publication du tweet via v2...", flush=True)
+        rep = client_v2.create_tweet(text=texte, media_ids=[media_id])
+        tweet_id = rep.data.get("id")
+        print(f"🎉 Tweet envoyé avec succès ! ID: {tweet_id}", flush=True)
         
     except tweepy.TweepyException as e:
-        print(f"❌ Erreur Tweepy : {e}", flush=True)
-    except Exception as e:
-        print(f"❌ Erreur inattendue lors de la publication : {e}", flush=True)
+        print(f"❌ Erreur lors de la publication v2 : {e}", flush=True)
+        print("👉 Si l'erreur est '402 Payment Required', rechargez des crédits sur developer.x.com.", flush=True)
 
 def envoyer_email(sujet: str, contenu: str, image_path: str):
     msg = MIMEMultipart()
