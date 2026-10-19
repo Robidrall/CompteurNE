@@ -121,8 +121,11 @@ def extraire_donnees():
     url_histo_nocache = f"{URL_HISTO}?_nocache={timestamp}"
 
     # En-têtes stricts anti-cache
+    # En-têtes simulant rigoureusement un iPhone (Safari) en France
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9",
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache",
         "Expires": "0"
