@@ -918,6 +918,14 @@ def run():
         print("Impossible d'extraire les données.", flush=True)
         sys.exit(1)
 
+    # --- PROTECTION ANTI-RETOUR DANS LE PASSÉ ---
+    etat_precedent = lire_etat()
+    if etat_precedent:
+        derniers_adherents = etat_precedent.get("adherents", 0)
+        if adherents <= derniers_adherents:
+            print(f"Données inchangées ou obsolètes reçues de l'API (reçu : {adherents}, dernier connu : {derniers_adherents}). Annulation du workflow.", flush=True)
+            sys.exit(0)
+
     maintenant = date_maj
     maintenant_iso = maintenant.isoformat()
 
