@@ -31,4 +31,5 @@ Cap 60k ➔ 100k (▓▓▓▓░░░░ 50 %) :
 ▫️ Projection : ~31 oct. 2026
 ```
 
+<img width="2160" height="2700" alt="HVURcJtWQAARd4N" src="https://github.com/user-attachments/assets/c9caed61-757e-4561-977a-237543844f04" />
 
