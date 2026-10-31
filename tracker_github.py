@@ -749,7 +749,7 @@ def generer_carte_visuelle(
           }},
           y: {{
             position: 'right',
-            min: 24000,
+            min: Math.floor(rawData[0].y / 10000) * 10000,
             max: {prochain_cap},
             border: {{ display: false }},
             grid: {{
@@ -762,7 +762,7 @@ def generer_carte_visuelle(
               padding: 12,
               stepSize: 10000,
               callback: function(value) {{
-                return (value / 1000) + 'k';
+                return Math.round(value / 1000) + 'k';
               }}
             }}
           }}
