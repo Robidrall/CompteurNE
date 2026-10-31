@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 import tweepy
 
 # --- Paramètres généraux ---
-PAS_CAP = 100000       # Objectif officiel fixé à 100 000
+PAS_CAP = 10000        # Paliers automatiques tous les 10 000 adhérents
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
 
 # API ouvertes
@@ -115,13 +115,10 @@ def calculer_momentum(gain_24h: int, gain_7j: int):
     return "⚪ Données en cours d'acquisition", moyenne_jour, "DYNAMIQUE SUR 7 JOURS"
 
 def extraire_donnees():
-    # Génération d'un horodatage pour bloquer le cache Cloudflare
     timestamp = int(time.time())
     url_live_nocache = f"{URL_LIVE}?_nocache={timestamp}"
     url_histo_nocache = f"{URL_HISTO}?_nocache={timestamp}"
 
-    # En-têtes stricts anti-cache
-    # En-têtes simulant rigoureusement un iPhone (Safari) en France
     headers = {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
         "Accept": "application/json, text/plain, */*",
@@ -753,7 +750,7 @@ def generer_carte_visuelle(
           y: {{
             position: 'right',
             min: 24000,
-            max: 100000,
+            max: {prochain_cap},
             border: {{ display: false }},
             grid: {{
               color: 'rgba(148, 163, 184, 0.40)',
@@ -850,7 +847,7 @@ def publier_sur_x(texte: str, image_path: str):
         print(f"❌ Fichier image introuvable : {image_path}", flush=True)
         return
 
-    # 1. Upload de l'image en v1.1 (Seule méthode autorisée pour les médias)
+    # 1. Upload de l'image en v1.1
     try:
         auth = tweepy.OAuth1UserHandler(
             consumer_key=X_API_KEY,
@@ -869,7 +866,7 @@ def publier_sur_x(texte: str, image_path: str):
         print(f"❌ Erreur lors de l'upload du média : {e}", flush=True)
         return
 
-    # 2. Publication du tweet en v2 (Obligatoire, nécessite un solde positif sur X Developer)
+    # 2. Publication du tweet en v2
     try:
         client_v2 = tweepy.Client(
             consumer_key=X_API_KEY,
@@ -918,7 +915,6 @@ def run():
         print("Impossible d'extraire les données.", flush=True)
         sys.exit(1)
 
-    # --- PROTECTION ANTI-RETOUR DANS LE PASSÉ ---
     etat_precedent = lire_etat()
     if etat_precedent:
         derniers_adherents = etat_precedent.get("adherents", 0)
@@ -931,12 +927,12 @@ def run():
 
     sauvegarder_csv(maintenant_iso, adherents, gain_7j)
     gain_24h = calculer_gain_24h(maintenant, adherents)
-
     cadence_txt, cadence_kpi = calculer_cadence_recente(CSV_FILE)
     momentum_txt, moyenne_jour_7j, badge_momentum = calculer_momentum(gain_24h, gain_7j)
 
-    cap_precedent = 60000 if adherents >= 60000 else (adherents // 5000) * 5000
-    prochain_cap = PAS_CAP
+    # --- LOGIQUE DES PALIERS DYNAMIQUES (tous les 10 000) ---
+    cap_precedent = (adherents // PAS_CAP) * PAS_CAP
+    prochain_cap = cap_precedent + PAS_CAP
     reste_avant_cap = prochain_cap - adherents
 
     jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
@@ -950,9 +946,9 @@ def run():
         eta_texte = "Indéterminée"
         eta_court = "—"
 
-    # Titre dynamique de l'e-mail
-    if adherents >= prochain_cap:
-        titre_sujet = f"🚀 CAP DES {formater_nombre(prochain_cap)} ADHÉRENTS FRANCHI !"
+    # --- DÉTECTION DU FRANCHISSEMENT DE CAP ---
+    if etat_precedent and etat_precedent.get("adherents", 0) < cap_precedent:
+        titre_sujet = f"🚀 CAP DES {formater_nombre(cap_precedent)} ADHÉRENTS FRANCHI !"
     else:
         titre_sujet = f"📊 Baromètre : {formater_nombre(adherents)} adhérents"
 
@@ -991,7 +987,6 @@ def run():
         f"Lien : https://twitter.com/intent/tweet?text={requests.utils.quote(tweet_texte)}\n\n"
     )
 
-    # Exécution inconditionnelle
     envoyer_email(titre_sujet, email_corps, CHART_FILE)
     publier_sur_x(tweet_texte, CHART_FILE)
     ecrire_etat(maintenant_iso, adherents)
