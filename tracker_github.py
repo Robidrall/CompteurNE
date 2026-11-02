@@ -14,7 +14,8 @@ from playwright.sync_api import sync_playwright
 import tweepy
 
 # --- Paramètres généraux ---
-PAS_CAP = 10000        # Paliers automatiques tous les 10 000 adhérents
+PAS_CAP = 10000        # Paliers automatiques normaux tous les 10 000 adhérents
+PALIER_OBJECTIF = 113000 # Palier spécifique
 TAILLE_BARRE = 8       # Longueur de la jauge textuelle
 
 # API ouvertes
@@ -30,7 +31,7 @@ SMTP_USER = os.getenv("GMAIL_USER")
 SMTP_PASS = os.getenv("GMAIL_APP_PASS")
 DESTINATAIRE = os.getenv("EMAIL_DESTINATAIRE", SMTP_USER)
 
-# Identifiants X (Twitter) avec nettoyage automatique des espaces accidentels
+# Identifiants X (Twitter)
 X_API_KEY = os.getenv("X_API_KEY", "").strip()
 X_API_SECRET = os.getenv("X_API_SECRET", "").strip()
 X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "").strip()
@@ -930,9 +931,17 @@ def run():
     cadence_txt, cadence_kpi = calculer_cadence_recente(CSV_FILE)
     momentum_txt, moyenne_jour_7j, badge_momentum = calculer_momentum(gain_24h, gain_7j)
 
-    # --- LOGIQUE DES PALIERS DYNAMIQUES (tous les 10 000) ---
-    cap_precedent = (adherents // PAS_CAP) * PAS_CAP
-    prochain_cap = cap_precedent + PAS_CAP
+    # --- LOGIQUE DES PALIERS DYNAMIQUES ADAPTÉE ---
+    if 100000 <= adherents < PALIER_OBJECTIF:
+        cap_precedent = 100000
+        prochain_cap = PALIER_OBJECTIF
+    elif PALIER_OBJECTIF <= adherents < 120000:
+        cap_precedent = PALIER_OBJECTIF
+        prochain_cap = 120000
+    else:
+        cap_precedent = (adherents // PAS_CAP) * PAS_CAP
+        prochain_cap = cap_precedent + PAS_CAP
+
     reste_avant_cap = prochain_cap - adherents
 
     jauge_txt = generer_jauge_texte(adherents, cap_precedent, prochain_cap, TAILLE_BARRE)
@@ -948,16 +957,25 @@ def run():
 
     # --- DÉTECTION DU FRANCHISSEMENT DE CAP ---
     if etat_precedent and etat_precedent.get("adherents", 0) < cap_precedent:
-        titre_sujet = f"🚀 CAP DES {formater_nombre(cap_precedent)} ADHÉRENTS FRANCHI !"
+        if cap_precedent == PALIER_OBJECTIF:
+            titre_sujet = f"🚀 HISTORIQUE : CAP DES {formater_nombre(cap_precedent)} ADHÉRENTS FRANCHI (1er parti de France) 🇫🇷 !"
+        else:
+            titre_sujet = f"🚀 CAP DES {formater_nombre(cap_precedent)} ADHÉRENTS FRANCHI !"
     else:
         titre_sujet = f"📊 Baromètre : {formater_nombre(adherents)} adhérents"
+        
+    # --- TEXTE DYNAMIQUE DE L'OBJECTIF DANS LE TWEET ---
+    if prochain_cap == PALIER_OBJECTIF:
+        ligne_objectif = f"Cap {prochain_cap // 1000}k avant d'être le premier parti de France en nombre d'adhérents ({jauge_txt}) :\n"
+    else:
+        ligne_objectif = f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
 
     tweet_texte = (
         f"📊 @nouv_energie · Baromètre\n\n"
         f"👥 {formater_nombre(adherents)} adhérents\n\n"
         f"⚡ {cadence_txt}\n"
         f"📈 +{formater_nombre(gain_24h)} (24h) · +{formater_nombre(gain_7j)} (7j)\n\n"
-        f"Cap {cap_precedent // 1000}k ➔ {prochain_cap // 1000}k ({jauge_txt}) :\n"
+        f"{ligne_objectif}"
         f"▫️ Reste : {formater_nombre(reste_avant_cap)} adhésions\n"
         f"▫️ Projection : {eta_texte}"
     )
