@@ -3,12 +3,17 @@ name: Tracker & Alerte Mail
 on:
   workflow_dispatch: # Déclenché exclusivement par le ping API externe (cron-job.org) ou manuellement
 
+# Empêche plusieurs runs de s'empiler en file d'attente ("Queued")
+concurrency:
+  group: tracker-nouvelle-energie
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   track-and-mail:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
